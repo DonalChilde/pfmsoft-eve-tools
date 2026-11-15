@@ -80,73 +80,16 @@
       <pre id="dataset-json" tabindex="0">No dataset loaded.</pre>
     </section>
   </main>
+  <script src="esi-common.js"></script>
   <script>
     "use strict";
 
-    const ESI_ORIGIN = "https://esi.evetech.net";
     const MAX_CONCURRENCY = 10;
     const $ = (id) => document.getElementById(id);
     const state = { schema: null, dataset: null, datasetLanguage: null, loadingGroups: false, pendingSharedSchema: null };
 
-    function isObject(value) {
-      return value !== null && typeof value === "object" && !Array.isArray(value);
-    }
-
-    function isDate(value) {
-      if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-      const date = new Date(`${value}T00:00:00Z`);
-      return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
-    }
-
-    function isTimestamp(value) {
-      return typeof value === "string" &&
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
-        isDate(value.slice(0, 10)) && !Number.isNaN(Date.parse(value));
-    }
-
-    function resolvePathItem(root, item) {
-      const seen = new Set();
-      while (isObject(item) && Object.hasOwn(item, "$ref")) {
-        const ref = item.$ref;
-        if (typeof ref !== "string" || !ref.startsWith("#/")) throw new Error(`Unsupported schema path reference: ${String(ref)}`);
-        if (seen.has(ref)) throw new Error(`Cyclic schema path reference: ${ref}`);
-        seen.add(ref);
-        let pointer;
-        try {
-          pointer = decodeURIComponent(ref.slice(2));
-        } catch {
-          throw new Error(`Invalid schema path reference: ${ref}`);
-        }
-        let target = root;
-        for (const token of pointer.split("/")) {
-          if (/~(?![01])/.test(token)) throw new Error(`Invalid schema path reference: ${ref}`);
-          const key = token.replace(/~1/g, "/").replace(/~0/g, "~");
-          if ((!isObject(target) && !Array.isArray(target)) || !Object.hasOwn(target, key)) {
-            throw new Error(`Missing schema path reference: ${ref}`);
-          }
-          target = target[key];
-        }
-        if (!isObject(target)) throw new Error(`Invalid schema path target: ${ref}`);
-        item = { ...target, ...Object.fromEntries(Object.entries(item).filter(([key]) => key !== "$ref")) };
-      }
-      return item;
-    }
-
     function parseMarketSchema(input, source, timestamp = null) {
-      let schema = input;
-      if (isObject(input) && Object.hasOwn(input, "dereferenced_schema")) {
-        if (!Object.hasOwn(input, "timestamp") || (input.timestamp !== null && !isTimestamp(input.timestamp))) {
-          throw new Error("The schema timestamp must be an ISO timestamp or null.");
-        }
-        schema = input.dereferenced_schema;
-        timestamp = input.timestamp;
-      }
-      if (!isObject(schema) || typeof schema.openapi !== "string" ||
-          !isObject(schema.info) || !isObject(schema.paths) || !isObject(schema.components)) {
-        throw new Error("Expected an OpenAPI object with openapi, info, paths, and components.");
-      }
-      const compatibilityDate = schema.info.version;
-      if (!isDate(compatibilityDate)) throw new Error("Schema info.version must contain a valid compatibility date.");
+      const { schema, timestamp: receivedAt, compatibilityDate } = readMarketSchema(input, timestamp);
       const found = new Map();
       const wanted = new Set(["GetMarketsGroups", "GetMarketsGroupsMarketGroupId"]);
       for (const [path, original] of Object.entries(schema.paths)) {
@@ -160,19 +103,15 @@
       }
       const listPath = found.get("GetMarketsGroups");
       const detailPath = found.get("GetMarketsGroupsMarketGroupId");
-      const safePath = (path) => typeof path === "string" && /^\/(?!\/)[^?#\\]*$/.test(path);
-      if (!safePath(listPath) || /[{}]/.test(listPath) || !safePath(detailPath) ||
+      if (!isSafePath(listPath) || /[{}]/.test(listPath) || !isSafePath(detailPath) ||
           !detailPath.includes("{market_group_id}") ||
           /[{}]/.test(detailPath.replace("{market_group_id}", ""))) {
         throw new Error("Schema market-group operation paths are invalid.");
       }
-      return { compatibilityDate, listPath, detailPath, source, timestamp };
+      return { compatibilityDate, listPath, detailPath, source, timestamp: receivedAt };
     }
 
-    function positiveId(value) {
-      return Number.isSafeInteger(value) && value > 0;
-    }
-
+    // Build root-to-group paths, rejecting missing parents and cycles.
     function buildDataset({ groups, receivedAt, expiresAt }) {
       const records = new Map();
       for (const group of groups) {
@@ -217,26 +156,11 @@
       return { received_at: receivedAt, expires_at: expiresAt, market_groups: result };
     }
 
-    async function getJson(url, options = {}) {
-      const response = await fetch(url, options);
-      if (!response.ok) {
-        const retry = response.headers.get("Retry-After");
-        throw new Error(`HTTP ${response.status} ${response.statusText}${retry ? `; retry after ${retry}` : ""}`.trim());
-      }
-      let data;
-      try {
-        data = await response.json();
-      } catch (error) {
-        if (error instanceof SyntaxError) throw new Error("ESI returned invalid JSON.");
-        throw error;
-      }
-      return { data, response, receivedAt: new Date().toISOString() };
-    }
-
+    // Fetch details concurrently; the first failure aborts all remaining workers.
     async function fetchMarketGroups(schema, progress, language) {
       const controller = new AbortController();
-      const options = { headers: { "X-Compatibility-Date": schema.compatibilityDate, "Accept-Language": language }, signal: controller.signal };
-      const list = await getJson(new URL(schema.listPath, ESI_ORIGIN), options);
+      const options = { headers: requestHeaders(schema, language), signal: controller.signal };
+      const list = await requestJson(new URL(schema.listPath, ESI_ORIGIN), options);
       if (!Array.isArray(list.data) || !list.data.every(positiveId) || new Set(list.data).size !== list.data.length) {
         throw new Error("ESI returned invalid or duplicate market group IDs.");
       }
@@ -253,7 +177,7 @@
           const id = ids[next++];
           try {
             const path = schema.detailPath.replace("{market_group_id}", String(id));
-            const result = await getJson(new URL(path, ESI_ORIGIN), options);
+            const result = await requestJson(new URL(path, ESI_ORIGIN), options);
             if (!isObject(result.data) || result.data.market_group_id !== id) {
               throw new Error(`ESI returned the wrong market group for ID ${id}.`);
             }
@@ -281,12 +205,6 @@
         receivedAt,
         expiresAt: parsedExpiry === null ? null : new Date(parsedExpiry).toISOString(),
       });
-    }
-
-    function setStatus(id, message, error = false) {
-      const element = $(id);
-      element.textContent = message;
-      element.className = `status ${error ? "error" : "success"}`;
     }
 
     function updateControls() {
@@ -337,24 +255,12 @@
     });
 
     $("save-groups").addEventListener("click", () => {
-      const blob = new Blob([JSON.stringify(state.dataset, null, 2) + "\n"], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `market-groups-${state.datasetLanguage}-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadJson(state.dataset, `market-groups-${state.datasetLanguage}-${new Date().toISOString().slice(0, 10)}.json`);
     });
 
     const shellWindow = typeof window === "undefined" || window.parent === window ? null : window.parent;
 
-    function isSharedSchemaMessage(data) {
-      return isObject(data) && data.type === "esi-schema-shared" && isObject(data.document) &&
-        typeof data.source === "string" && (data.timestamp === null || isTimestamp(data.timestamp));
-    }
-
+    // Do not change the schema underneath an in-flight download.
     function receiveSharedSchema(payload) {
       if (state.loadingGroups) {
         state.pendingSharedSchema = payload;

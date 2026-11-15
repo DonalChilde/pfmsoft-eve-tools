@@ -85,6 +85,7 @@
     </section>
     <div id="panes"></div>
   </main>
+  <script src="esi-common.js"></script>
   <script>
     "use strict";
 
@@ -94,13 +95,10 @@
       "market-orders": { title: "EVE market orders", src: "market-orders.html" },
     };
     const $ = (id) => document.getElementById(id);
+    // Keep frames alive across navigation so tool state survives pane switches.
     const frames = new Map();
     const readyFrames = new Set();
     const state = { pane: "overview", sharedSchema: null };
-
-    function isObject(value) {
-      return value !== null && typeof value === "object" && !Array.isArray(value);
-    }
 
     function frameFor(paneId) {
       if (!frames.has(paneId)) {
@@ -136,6 +134,8 @@
       frames.get(paneId).contentWindow.postMessage({ type: "esi-schema-shared", ...state.sharedSchema }, "*");
     }
 
+    // Only the schema browser may publish; ready market panes receive updates,
+    // and later-opened panes receive the most recently published schema.
     function receiveMessage(source, data) {
       const paneId = senderId(source);
       if (!paneId || !isObject(data)) return;

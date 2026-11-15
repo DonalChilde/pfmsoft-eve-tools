@@ -101,10 +101,10 @@
       </section>
     </div>
   </main>
+  <script src="esi-common.js"></script>
   <script>
     "use strict";
 
-    const ESI_ORIGIN = "https://esi.evetech.net";
     const MAX_CONCURRENCY = 10;
     const NAME_BATCH_SIZE = 950;
     const MAX_NAME_ID = 2147483647;
@@ -112,55 +112,8 @@
     const $ = (id) => document.getElementById(id);
     const state = { schema: null, names: new Map(), regions: [], dataset: null, summary: null, busy: false, pendingSharedSchema: null };
 
-    function isObject(value) {
-      return value !== null && typeof value === "object" && !Array.isArray(value);
-    }
-
-    function isDate(value) {
-      if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-      const date = new Date(`${value}T00:00:00Z`);
-      return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
-    }
-
-    function isTimestamp(value) {
-      return typeof value === "string" &&
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
-        isDate(value.slice(0, 10)) && !Number.isNaN(Date.parse(value));
-    }
-
-    function resolvePathItem(root, item) {
-      const seen = new Set();
-      while (isObject(item) && Object.hasOwn(item, "$ref")) {
-        const ref = item.$ref;
-        if (typeof ref !== "string" || !ref.startsWith("#/")) throw new Error(`Unsupported schema path reference: ${String(ref)}`);
-        if (seen.has(ref)) throw new Error(`Cyclic schema path reference: ${ref}`);
-        seen.add(ref);
-        let pointer;
-        try { pointer = decodeURIComponent(ref.slice(2)); }
-        catch { throw new Error(`Invalid schema path reference: ${ref}`); }
-        let target = root;
-        for (const token of pointer.split("/")) {
-          if (/~(?![01])/.test(token)) throw new Error(`Invalid schema path reference: ${ref}`);
-          const key = token.replace(/~1/g, "/").replace(/~0/g, "~");
-          if ((!isObject(target) && !Array.isArray(target)) || !Object.hasOwn(target, key)) throw new Error(`Missing schema path reference: ${ref}`);
-          target = target[key];
-        }
-        if (!isObject(target)) throw new Error(`Invalid schema path target: ${ref}`);
-        item = { ...target, ...Object.fromEntries(Object.entries(item).filter(([key]) => key !== "$ref")) };
-      }
-      return item;
-    }
-
     function parseSchema(input, source, timestamp = null) {
-      let schema = input;
-      if (isObject(input) && Object.hasOwn(input, "dereferenced_schema")) {
-        if (!Object.hasOwn(input, "timestamp") || (input.timestamp !== null && !isTimestamp(input.timestamp))) throw new Error("The schema timestamp must be an ISO timestamp or null.");
-        schema = input.dereferenced_schema;
-        timestamp = input.timestamp;
-      }
-      if (!isObject(schema) || typeof schema.openapi !== "string" || !isObject(schema.info) || !isObject(schema.paths) || !isObject(schema.components)) throw new Error("Expected an OpenAPI object with openapi, info, paths, and components.");
-      const compatibilityDate = schema.info.version;
-      if (!isDate(compatibilityDate)) throw new Error("Schema info.version must contain a valid compatibility date.");
+      const { schema, timestamp: receivedAt, compatibilityDate } = readMarketSchema(input, timestamp);
       const wanted = new Map([["GetUniverseRegions", "get"], ["PostUniverseNames", "post"], ["GetMarketsRegionIdOrders", "get"]]);
       const found = new Map();
       for (const [path, original] of Object.entries(schema.paths)) {
@@ -176,15 +129,10 @@
       const regionsPath = found.get("GetUniverseRegions");
       const namesPath = found.get("PostUniverseNames");
       const ordersPath = found.get("GetMarketsRegionIdOrders");
-      const safePath = (path) => typeof path === "string" && /^\/(?!\/)[^?#\\]*$/.test(path);
-      if (!safePath(regionsPath) || /[{}]/.test(regionsPath) || !safePath(namesPath) || /[{}]/.test(namesPath) ||
-          !safePath(ordersPath) || !ordersPath.includes("{region_id}") ||
+      if (!isSafePath(regionsPath) || /[{}]/.test(regionsPath) || !isSafePath(namesPath) || /[{}]/.test(namesPath) ||
+          !isSafePath(ordersPath) || !ordersPath.includes("{region_id}") ||
           /[{}]/.test(ordersPath.replace("{region_id}", ""))) throw new Error("Schema operation paths are invalid.");
-      return { compatibilityDate, regionsPath, namesPath, ordersPath, source, timestamp };
-    }
-
-    function positiveId(value) {
-      return Number.isSafeInteger(value) && value > 0;
+      return { compatibilityDate, regionsPath, namesPath, ordersPath, source, timestamp: receivedAt };
     }
 
     function parseNames(input) {
@@ -200,25 +148,10 @@
     }
 
     async function getJson(url, options = {}) {
-      const response = await fetch(url, options);
-      if (!response.ok) {
-        const retry = response.headers.get("Retry-After");
-        const detail = (await response.text()).trim().replace(/\s+/g, " ").slice(0, 500);
-        throw new Error(`HTTP ${response.status} ${response.statusText}${retry ? `; retry after ${retry}` : ""}${detail ? `; ${detail}` : ""}`.trim());
-      }
-      let data;
-      try { data = await response.json(); }
-      catch (error) {
-        if (error instanceof SyntaxError) throw new Error("ESI returned invalid JSON.");
-        throw error;
-      }
-      return { data, response, receivedAt: new Date().toISOString() };
+      return requestJson(url, options, "body");
     }
 
-    function requestHeaders(schema, language) {
-      return { "X-Compatibility-Date": schema.compatibilityDate, "Accept-Language": language };
-    }
-
+    // Reuse cached names and report IDs that exceed the endpoint's 32-bit limit.
     async function resolveNames(schema, existing, ids, language, progress) {
       const names = new Map(existing);
       const missing = [...new Set(ids)].filter((id) => {
@@ -259,6 +192,7 @@
       return Date.parse(value);
     }
 
+    // Fetch pages concurrently, preserving page order and aborting on failure.
     async function fetchOrders(schema, regionId, language, progress) {
       if (!positiveId(regionId)) throw new Error("Choose a valid region.");
       const controller = new AbortController();
@@ -316,6 +250,7 @@
       return { received_at: receivedAt, expires_at: new Date(expiry).toISOString(), region_id: regionId, orders };
     }
 
+    // Keep price and filter arithmetic exact before converting results to JSON.
     function decimalRatio(value) {
       const text = String(value).trim();
       const match = /^(\d+)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(text);
@@ -346,6 +281,7 @@
       return Number(value);
     }
 
+    // Determine the 5% depth price after filtering outliers; include all ties.
     function summarizeSide(orders, regionId, typeId, systemId, locationId, isBuy, factorNumerator, factorDenominator) {
       if (!orders.length) return null;
       const sorted = orders.map((order) => ({ price: priceCents(order.price), volume: BigInt(order.volume_remain) }));
@@ -416,23 +352,6 @@
     function summaryFilename(summary) {
       const scope = summary.location_id !== null ? `location-${summary.location_id}` : summary.system_id !== null ? `system-${summary.system_id}` : `region-${summary.region_id}`;
       return `order-summary-${scope}-${fileSafe(summary.expires_at)}.json`;
-    }
-
-    function saveJson(value, filename) {
-      const blob = new Blob([JSON.stringify(value, null, 2) + "\n"], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-
-    function setStatus(id, message, error = false) {
-      $(id).textContent = message;
-      $(id).className = `status ${error ? "error" : "success"}`;
     }
 
     function showNamesStatus(unsupportedIds) {
@@ -625,17 +544,13 @@
       updateControls();
     });
 
-    $("save-orders").addEventListener("click", () => saveJson(state.dataset, ordersFilename(state.dataset.region_id, state.dataset.expires_at)));
-    $("save-summary").addEventListener("click", () => saveJson(state.summary, summaryFilename(state.summary)));
-    $("save-names").addEventListener("click", () => saveJson([...state.names.values()].sort((a, b) => a.id - b.id), "resolved-names.json"));
+    $("save-orders").addEventListener("click", () => downloadJson(state.dataset, ordersFilename(state.dataset.region_id, state.dataset.expires_at)));
+    $("save-summary").addEventListener("click", () => downloadJson(state.summary, summaryFilename(state.summary)));
+    $("save-names").addEventListener("click", () => downloadJson([...state.names.values()].sort((a, b) => a.id - b.id), "resolved-names.json"));
 
     const shellWindow = typeof window === "undefined" || window.parent === window ? null : window.parent;
 
-    function isSharedSchemaMessage(data) {
-      return isObject(data) && data.type === "esi-schema-shared" && isObject(data.document) &&
-        typeof data.source === "string" && (data.timestamp === null || isTimestamp(data.timestamp));
-    }
-
+    // Do not change the schema underneath an in-flight operation.
     function receiveSharedSchema(payload) {
       if (state.busy) {
         state.pendingSharedSchema = payload;

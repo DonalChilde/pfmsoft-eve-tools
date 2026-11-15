@@ -10,6 +10,7 @@ const html = fs.readFileSync(
   path.join(__dirname, "../esi/esi-schema.html"), "utf8",
 );
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const commonScript = fs.readFileSync(path.join(__dirname, "../esi/esi-common.js"), "utf8");
 
 function browser(window) {
   const elements = new Map();
@@ -31,7 +32,8 @@ function browser(window) {
       return elements.get(id);
     },
   };
-  const context = vm.createContext({ document, URL, Date, window });
+  const context = vm.createContext({ document, URL, Date, Headers, window });
+  vm.runInContext(commonScript, context);
   vm.runInContext(script, context);
   return context;
 }

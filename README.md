@@ -12,6 +12,10 @@ This is a collection of html tools related to Eve Online. The tools are ment to 
 - Fetch or open the schema in the Schema browser; it is shared with both market tools.
   Switching tools preserves their state until the index is reloaded. Applying a new
   schema resets market datasets after any current operation finishes.
+- Keep [esi-common.js](tools/esi/esi-common.js) alongside the ESI HTML files. It
+  provides their shared network, schema validation, status, and JSON download helpers;
+  no server or build is required.
+- ESI requests identify this project using the `X-User-Agent` header.
 - Schema View
 - Market Groups with Path
 - Market Orders with price summaries (5% buy and sell)

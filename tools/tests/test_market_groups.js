@@ -8,6 +8,7 @@ const vm = require("node:vm");
 
 const html = fs.readFileSync(path.join(__dirname, "../esi/market-groups.html"), "utf8");
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const commonScript = fs.readFileSync(path.join(__dirname, "../esi/esi-common.js"), "utf8");
 
 function browser() {
   const elements = new Map();
@@ -33,8 +34,9 @@ function browser() {
     },
   };
   const context = vm.createContext({
-    document, URL: BrowserURL, Date, Blob, AbortController, setTimeout: (callback) => callback(),
+    document, URL: BrowserURL, Date, Headers, Blob, AbortController, setTimeout: (callback) => callback(),
   });
+  vm.runInContext(commonScript, context);
   vm.runInContext(script, context);
   return context;
 }
@@ -139,7 +141,7 @@ test("downloads details concurrently and uses list response expiry and schema da
   let running = 0;
   let maximum = 0;
   context.fetch = async (url, options) => {
-    calls.push({ path: new URL(url).pathname, date: options.headers["X-Compatibility-Date"] });
+    calls.push({ path: new URL(url).pathname, date: options.headers.get("X-Compatibility-Date") });
     const detailId = Number(new URL(url).pathname.split("/").at(-1));
     if (!detailId) {
       return {
@@ -173,7 +175,7 @@ test("selected language is sent on every request and locked during a fetch", asy
   const headers = [];
   let release;
   context.fetch = async (url, options) => {
-    headers.push(options.headers["Accept-Language"]);
+    headers.push(options.headers.get("Accept-Language"));
     const id = Number(new URL(url).pathname.split("/").at(-1));
     if (!id) {
       await new Promise((resolve) => { release = resolve; });

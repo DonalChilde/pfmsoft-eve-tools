@@ -8,6 +8,7 @@ const vm = require("node:vm");
 
 const html = fs.readFileSync(path.join(__dirname, "../esi/market-orders.html"), "utf8");
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const commonScript = fs.readFileSync(path.join(__dirname, "../esi/esi-common.js"), "utf8");
 
 function browser() {
   const elements = new Map();
@@ -29,7 +30,8 @@ function browser() {
   class BrowserURL extends URL {}
   BrowserURL.createObjectURL = () => "blob:test";
   BrowserURL.revokeObjectURL = () => {};
-  const context = vm.createContext({ document, URL: BrowserURL, Date, Blob, AbortController, setTimeout });
+  const context = vm.createContext({ document, URL: BrowserURL, Date, Headers, Blob, AbortController, setTimeout });
+  vm.runInContext(commonScript, context);
   vm.runInContext(script, context);
   return context;
 }
@@ -103,7 +105,7 @@ test("pages are combined in page order with page-one expiry and selected languag
   c.fetch = async (url, options) => {
     const parsed = new URL(url);
     const page = Number(parsed.searchParams.get("page"));
-    calls.push({ page, language: options.headers["Accept-Language"], date: options.headers["X-Compatibility-Date"] });
+    calls.push({ page, language: options.headers.get("Accept-Language"), date: options.headers.get("X-Compatibility-Date") });
     if (page === 2) await new Promise((resolve) => setTimeout(resolve, 5));
     return response([order(page, 100, 1, true)], { expires: expiry, "x-pages": "3" });
   };
@@ -192,7 +194,7 @@ test("names imports reject conflicts and resolve only unknown IDs in batches", a
   c.fetch = async (url, options) => {
     const ids = JSON.parse(options.body);
     batches.push(ids);
-    assert.equal(options.headers["Accept-Language"], "fr");
+    assert.equal(options.headers.get("Accept-Language"), "fr");
     return response(ids.map((id) => ({ id, name: `Name ${id}`, category: "inventory_type" })));
   };
   const result = await run(c, "resolveNames(parseSchema(input, 'file'), parseNames(names), Array.from({length: 952}, (_, i) => i + 1), 'fr', () => {})");
