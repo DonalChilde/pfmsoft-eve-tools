@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  Standalone ESI market-group downloader. Open directly in a modern browser.
+  ESI market-group downloader, used through the ESI tools index.
   Network access and ESI cross-origin permission are required for downloads.
   Data stays in memory until reload.
 -->
@@ -37,17 +37,15 @@
 <body>
   <header>
     <h1>EVE market groups</h1>
-    <p class="intro">Load an ESI schema, then download market groups and their paths as JSON. Data stays in this page until reload.</p>
+    <p class="intro">Download market groups and their paths as JSON using the shared ESI schema. Data stays in this page until reload.</p>
     <p class="help">ESI access requires an internet connection and browser permission for cross-origin requests. No EVE account or authentication is needed.</p>
   </header>
   <main>
     <div>
       <section aria-labelledby="schema-heading">
         <h2 id="schema-heading">ESI schema</h2>
-        <label for="schema-file">Open raw OpenAPI or dereferenced schema JSON</label>
-        <input id="schema-file" type="file" accept=".json,application/json">
-        <p class="help">Dereferenced files contain <code>dereferenced_schema</code> and <code>timestamp</code>.</p>
-        <div class="actions"><button id="fetch-schema" type="button">Fetch latest schema</button></div>
+        <p class="help">Load a schema in the Schema browser. Applying a new schema resets the dataset.</p>
+        <p id="standalone-help" class="help" hidden>This tool requires the <a href="index.html">ESI tools index</a> to receive a schema.</p>
         <p id="schema-status" class="status" role="status" aria-live="polite">A schema is required before fetching market groups.</p>
         <p id="schema-info" class="help">No schema loaded.</p>
       </section>
@@ -88,7 +86,7 @@
     const ESI_ORIGIN = "https://esi.evetech.net";
     const MAX_CONCURRENCY = 10;
     const $ = (id) => document.getElementById(id);
-    const state = { schema: null, dataset: null, datasetLanguage: null, loadingSchema: false, loadingGroups: false };
+    const state = { schema: null, dataset: null, datasetLanguage: null, loadingGroups: false, pendingSharedSchema: null };
 
     function isObject(value) {
       return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -292,12 +290,15 @@
     }
 
     function updateControls() {
-      const busy = state.loadingSchema || state.loadingGroups;
-      $("schema-file").disabled = busy;
-      $("fetch-schema").disabled = busy;
+      const busy = state.loadingGroups;
       $("language").disabled = busy;
       $("fetch-groups").disabled = busy || !state.schema;
       $("save-groups").disabled = busy || !state.dataset;
+      if (!busy && state.pendingSharedSchema) {
+        const payload = state.pendingSharedSchema;
+        state.pendingSharedSchema = null;
+        receiveSharedSchema(payload);
+      }
     }
 
     function applySchema(schema) {
@@ -309,53 +310,8 @@
       $("groups-status").textContent = "";
     }
 
-    $("schema-file").addEventListener("change", async (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-      state.loadingSchema = true;
-      updateControls();
-      setStatus("schema-status", `Opening ${file.name}…`);
-      try {
-        const schema = parseMarketSchema(JSON.parse(await file.text()), `File: ${file.name}`);
-        applySchema(schema);
-        setStatus("schema-status", `Loaded ${file.name}.`);
-      } catch (error) {
-        setStatus("schema-status", `Could not open ${file.name}: ${error.message}`, true);
-      } finally {
-        event.target.value = "";
-        state.loadingSchema = false;
-        updateControls();
-      }
-    });
-
-    $("fetch-schema").addEventListener("click", async () => {
-      state.loadingSchema = true;
-      updateControls();
-      setStatus("schema-status", "Fetching compatibility dates…");
-      try {
-        const dates = (await getJson(`${ESI_ORIGIN}/meta/compatibility-dates`)).data;
-        if (!isObject(dates) || !Array.isArray(dates.compatibility_dates) ||
-            !dates.compatibility_dates.length || !dates.compatibility_dates.every(isDate)) {
-          throw new Error("ESI returned an invalid or empty compatibility date list.");
-        }
-        const latest = [...dates.compatibility_dates].sort().at(-1);
-        setStatus("schema-status", `Fetching schema for ${latest}…`);
-        const url = new URL("/meta/openapi.json", ESI_ORIGIN);
-        url.searchParams.set("compatibility_date", latest);
-        const result = await getJson(url);
-        const schema = parseMarketSchema(result.data, `ESI ${latest}`, result.receivedAt);
-        applySchema(schema);
-        setStatus("schema-status", `Loaded the latest schema (${schema.compatibilityDate}).`);
-      } catch (error) {
-        setStatus("schema-status", `Could not fetch the latest schema: ${error.message}`, true);
-      } finally {
-        state.loadingSchema = false;
-        updateControls();
-      }
-    });
-
     $("fetch-groups").addEventListener("click", async () => {
-      if (!state.schema || state.loadingSchema || state.loadingGroups) return;
+      if (!state.schema || state.loadingGroups) return;
       const language = $("language").value;
       state.loadingGroups = true;
       state.dataset = null;
@@ -391,6 +347,39 @@
       anchor.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
+
+    const shellWindow = typeof window === "undefined" || window.parent === window ? null : window.parent;
+
+    function isSharedSchemaMessage(data) {
+      return isObject(data) && data.type === "esi-schema-shared" && isObject(data.document) &&
+        typeof data.source === "string" && (data.timestamp === null || isTimestamp(data.timestamp));
+    }
+
+    function receiveSharedSchema(payload) {
+      if (state.loadingGroups) {
+        state.pendingSharedSchema = payload;
+        setStatus("schema-status", "A new shared schema will be applied when the current download finishes.");
+        return;
+      }
+      try {
+        applySchema(parseMarketSchema(payload.document, payload.source, payload.timestamp));
+        setStatus("schema-status", `Loaded shared schema (${payload.source}).`);
+      } catch (error) {
+        state.schema = null;
+        $("schema-info").textContent = "No usable shared schema.";
+        setStatus("schema-status", `Could not use the shared schema: ${error.message}`, true);
+      }
+      updateControls();
+    }
+
+    if (shellWindow) {
+      window.addEventListener("message", (event) => {
+        if (event.source === shellWindow && isSharedSchemaMessage(event.data)) receiveSharedSchema(event.data);
+      });
+      shellWindow.postMessage({ type: "esi-tool-ready" }, "*");
+    } else {
+      $("standalone-help").hidden = false;
+    }
   </script>
 </body>
 </html>

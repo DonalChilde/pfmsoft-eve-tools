@@ -7,11 +7,11 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const html = fs.readFileSync(
-  path.join(__dirname, "../esi-schema.html"), "utf8",
+  path.join(__dirname, "../esi/esi-schema.html"), "utf8",
 );
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
-function browser() {
+function browser(window) {
   const elements = new Map();
   function element() {
     return {
@@ -31,10 +31,28 @@ function browser() {
       return elements.get(id);
     },
   };
-  const context = vm.createContext({ document, URL, Date });
+  const context = vm.createContext({ document, URL, Date, window });
   vm.runInContext(script, context);
   return context;
 }
+
+test("schema browser publishes imported schema to its parent", async () => {
+  const messages = [];
+  const parent = { postMessage(message) { messages.push(message); } };
+  const context = browser({ parent });
+  const schema = { openapi: "3.1.0", info: {}, paths: {}, components: {} };
+  const target = { files: [{ name: "schema.json", text: async () => JSON.stringify(schema) }], value: "schema.json" };
+  await context.document.getElementById("schema-file").change({ target });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].type, "esi-schema-loaded");
+  assert.equal(messages[0].source, "File: schema.json");
+  assert.equal(messages[0].timestamp, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(messages[0].document)), schema);
+  const timestamp = "2026-08-18T12:00:00Z";
+  target.files = [{ name: "dereferenced.json", text: async () => JSON.stringify({ dereferenced_schema: schema, timestamp }) }];
+  await context.document.getElementById("schema-file").change({ target });
+  assert.equal(messages[1].timestamp, timestamp);
+});
 
 function evaluate(context, expression) {
   return vm.runInContext(expression, context);

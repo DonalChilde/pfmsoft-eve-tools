@@ -3,6 +3,8 @@
   ESI schema browser. Open directly in a modern browser; no server or build is
   required. ESI downloads require network access and browser CORS permission.
   Loaded data stays in memory until the page is reloaded.
+  When embedded by the ESI tools index (index.html), loaded schemas are shared
+  with the other tool panes via postMessage.
 -->
 <html lang="en">
 <head>
@@ -83,6 +85,7 @@
         <label for="schema-file">Open raw OpenAPI or dereferenced schema JSON</label>
         <input id="schema-file" type="file" accept=".json,application/json">
         <p class="help">Dereferenced files contain <code>dereferenced_schema</code> and <code>timestamp</code>. Raw imports have an unknown receipt timestamp. A dereferenced file cannot be converted back to its original raw schema. Dereferencing preserves sibling fields on references, unlike the current eve-link resolver.</p>
+        <p class="help">When opened from the ESI tools index, a loaded schema is shared with the market tools.</p>
         <div class="actions">
           <button id="save-raw" type="button" disabled>Save raw schema</button>
           <button id="save-dereferenced" type="button" disabled>Save dereferenced schema</button>
@@ -453,9 +456,11 @@
         const url = new URL(URLS.schema);
         url.searchParams.set("compatibility_date", date);
         const result = await fetchJson(url);
-        const schema = parseSchema(result, `ESI ${date}`, new Date().toISOString());
+        const receivedAt = new Date().toISOString();
+        const schema = parseSchema(result, `ESI ${date}`, receivedAt);
         if (request !== state.schemaRequest) return;
         applySchema(schema);
+        publishSchema(result, `ESI ${date}`, receivedAt);
         setStatus("schema-status", `Schema for ${date} loaded.`);
       } catch (error) {
         if (request === state.schemaRequest) setStatus("schema-status", `Could not fetch schema for ${date}: ${error.message}`, true);
@@ -472,6 +477,7 @@
         const schema = parseSchema(input, `File: ${file.name}`);
         if (request !== state.schemaRequest) return;
         applySchema(schema);
+        publishSchema(input, `File: ${file.name}`, schema.timestamp);
         setStatus("schema-status", `Loaded ${file.name}.`);
       } catch (error) {
         if (request === state.schemaRequest) setStatus("schema-status", `Could not open ${file.name}: ${error.message}`, true);
@@ -504,6 +510,13 @@
     $("schema-view-raw").addEventListener("change", showCurrentView);
     $("schema-view-dereferenced").addEventListener("change", showCurrentView);
     $("show-schema").addEventListener("click", showFullSchema);
+
+    const shellWindow = typeof window === "undefined" || window.parent === window ? null : window.parent;
+
+    function publishSchema(schemaDocument, source, timestamp = null) {
+      if (shellWindow) shellWindow.postMessage({ type: "esi-schema-loaded", document: schemaDocument, source, timestamp }, "*");
+    }
+
   </script>
 </body>
 </html>

@@ -1,5 +1,7 @@
 <!doctype html>
-<!-- Standalone ESI market orders tool. Open directly in a modern browser. -->
+<!--
+  ESI market orders tool, used through the ESI tools index.
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -32,17 +34,15 @@
 <body>
   <header>
     <h1>EVE market orders</h1>
-    <p class="help">Load an ESI schema, choose a region, and fetch its market orders. Data stays in memory until reload. ESI access requires an internet connection and browser cross-origin permission; no login is needed.</p>
+    <p class="help">Use the shared ESI schema, choose a region, and fetch its market orders. Data stays in memory until reload. ESI access requires an internet connection and browser cross-origin permission; no login is needed.</p>
     <p class="help">Pages must have the same expiry. Matching expiry is a practical approximation and does not guarantee a consistent snapshot.</p>
   </header>
   <main>
     <div>
       <section aria-labelledby="schema-heading">
         <h2 id="schema-heading">ESI schema</h2>
-        <label for="schema-file">Open raw OpenAPI or dereferenced schema JSON</label>
-        <input id="schema-file" type="file" accept=".json,application/json">
-        <p class="help">Dereferenced files contain <code>dereferenced_schema</code> and <code>timestamp</code>.</p>
-        <div class="actions"><button id="fetch-schema" type="button">Fetch latest schema</button></div>
+        <p class="help">Load a schema in the Schema browser. Applying a new schema resets regions, orders, and summaries.</p>
+        <p id="standalone-help" class="help" hidden>This tool requires the <a href="index.html">ESI tools index</a> to receive a schema.</p>
         <p id="schema-status" class="status" role="status" aria-live="polite">A schema is required.</p>
         <p id="schema-info" class="help">No schema loaded.</p>
       </section>
@@ -110,7 +110,7 @@
     const MAX_NAME_ID = 2147483647;
     const CATEGORIES = new Set(["alliance", "character", "constellation", "corporation", "faction", "inventory_type", "region", "solar_system", "station", "structure"]);
     const $ = (id) => document.getElementById(id);
-    const state = { schema: null, names: new Map(), regions: [], dataset: null, summary: null, busy: false };
+    const state = { schema: null, names: new Map(), regions: [], dataset: null, summary: null, busy: false, pendingSharedSchema: null };
 
     function isObject(value) {
       return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -448,7 +448,7 @@
 
     function updateControls() {
       const busy = state.busy;
-      for (const id of ["schema-file", "fetch-schema", "names-file", "language", "summary-scope", "filter-factor"]) $(id).disabled = busy;
+      for (const id of ["names-file", "language", "summary-scope", "filter-factor"]) $(id).disabled = busy;
       $("fetch-regions").disabled = busy || !state.schema;
       $("region").disabled = busy || !state.regions.length;
       $("fetch-orders").disabled = busy || !state.schema || !state.regions.length || !$("region").value;
@@ -458,6 +458,11 @@
       $("calculate-summary").disabled = busy || !state.dataset;
       $("save-summary").disabled = busy || !state.summary;
       $("scope-id").disabled = busy || !state.dataset || $("summary-scope").value === "region";
+      if (!busy && state.pendingSharedSchema) {
+        const payload = state.pendingSharedSchema;
+        state.pendingSharedSchema = null;
+        receiveSharedSchema(payload);
+      }
     }
 
     function option(value, text) {
@@ -530,34 +535,6 @@
       $("orders-status").textContent = "";
       $("summary-status").textContent = "";
     }
-
-    $("schema-file").addEventListener("change", async (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-      state.busy = true; updateControls();
-      try {
-        applySchema(parseSchema(JSON.parse(await file.text()), `File: ${file.name}`));
-        setStatus("schema-status", `Loaded ${file.name}.`);
-      } catch (error) { setStatus("schema-status", `Could not open ${file.name}: ${error.message}`, true); }
-      finally { event.target.value = ""; state.busy = false; updateControls(); }
-    });
-
-    $("fetch-schema").addEventListener("click", async () => {
-      state.busy = true; updateControls();
-      try {
-        setStatus("schema-status", "Fetching compatibility dates…");
-        const dates = (await getJson(`${ESI_ORIGIN}/meta/compatibility-dates`)).data;
-        if (!isObject(dates) || !Array.isArray(dates.compatibility_dates) || !dates.compatibility_dates.length || !dates.compatibility_dates.every(isDate)) throw new Error("ESI returned an invalid or empty compatibility date list.");
-        const latest = [...dates.compatibility_dates].sort().at(-1);
-        const url = new URL("/meta/openapi.json", ESI_ORIGIN);
-        url.searchParams.set("compatibility_date", latest);
-        setStatus("schema-status", `Fetching schema for ${latest}…`);
-        const result = await getJson(url);
-        applySchema(parseSchema(result.data, `ESI ${latest}`, result.receivedAt));
-        setStatus("schema-status", `Loaded schema ${state.schema.compatibilityDate}.`);
-      } catch (error) { setStatus("schema-status", `Could not fetch schema: ${error.message}`, true); }
-      finally { state.busy = false; updateControls(); }
-    });
 
     $("names-file").addEventListener("change", async (event) => {
       const file = event.target.files[0];
@@ -651,6 +628,39 @@
     $("save-orders").addEventListener("click", () => saveJson(state.dataset, ordersFilename(state.dataset.region_id, state.dataset.expires_at)));
     $("save-summary").addEventListener("click", () => saveJson(state.summary, summaryFilename(state.summary)));
     $("save-names").addEventListener("click", () => saveJson([...state.names.values()].sort((a, b) => a.id - b.id), "resolved-names.json"));
+
+    const shellWindow = typeof window === "undefined" || window.parent === window ? null : window.parent;
+
+    function isSharedSchemaMessage(data) {
+      return isObject(data) && data.type === "esi-schema-shared" && isObject(data.document) &&
+        typeof data.source === "string" && (data.timestamp === null || isTimestamp(data.timestamp));
+    }
+
+    function receiveSharedSchema(payload) {
+      if (state.busy) {
+        state.pendingSharedSchema = payload;
+        setStatus("schema-status", "A new shared schema will be applied when the current operation finishes.");
+        return;
+      }
+      try {
+        applySchema(parseSchema(payload.document, payload.source, payload.timestamp));
+        setStatus("schema-status", `Loaded shared schema (${payload.source}).`);
+      } catch (error) {
+        state.schema = null;
+        $("schema-info").textContent = "No usable shared schema.";
+        setStatus("schema-status", `Could not use the shared schema: ${error.message}`, true);
+      }
+      updateControls();
+    }
+
+    if (shellWindow) {
+      window.addEventListener("message", (event) => {
+        if (event.source === shellWindow && isSharedSchemaMessage(event.data)) receiveSharedSchema(event.data);
+      });
+      shellWindow.postMessage({ type: "esi-tool-ready" }, "*");
+    } else {
+      $("standalone-help").hidden = false;
+    }
   </script>
 </body>
 </html>

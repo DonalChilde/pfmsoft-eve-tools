@@ -1,0 +1,161 @@
+<!doctype html>
+<!--
+  ESI tools index. Open directly in a modern browser; no server or build is
+  required. Each tool loads in a pane below the nav bar and keeps its state
+  while another pane is shown. A schema loaded in the schema browser is relayed
+  to the market panes via postMessage. Nothing is
+  stored between page reloads.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EVE ESI tools</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; display: flex; flex-direction: column; }
+    h1 { margin-top: 0; font-size: 1.6rem; }
+    h2 { margin-top: 0; font-size: 1.2rem; }
+    p { line-height: 1.5; }
+    .intro, .help { color: #b9c4d4; }
+    .help { font-size: .9rem; }
+    nav { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: .75rem; border: 1px solid #475569; border-radius: .5rem; background: #1e293b; }
+    nav ul { display: flex; flex-wrap: wrap; gap: .25rem; margin: 0; padding: .4rem; list-style: none; }
+    nav button { padding: .65rem 1rem; border: 0; border-radius: .25rem; background: none; color: #e5e7eb; font: inherit; font-weight: 600; cursor: pointer; }
+    nav button:hover { background: #334155; }
+    nav button[aria-current="page"] { background: #93c5fd; color: #0f172a; }
+    #shared-status { margin: 0 .75rem 0 auto; padding: .4rem 0; font-size: .9rem; color: #b9c4d4; overflow-wrap: anywhere; }
+    main { flex: 1; min-height: 0; display: flex; }
+    #overview { flex: 1; overflow: auto; padding: 0 1.5rem 1.5rem; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 24rem)); gap: .75rem; align-items: start; }
+    .cards section { min-width: 0; padding: 1.25rem; border: 1px solid #475569; border-radius: .5rem; background: #1e293b; }
+    .cards button { padding: .65rem 1rem; border: 0; border-radius: .25rem; background: #93c5fd; color: #0f172a; font: inherit; font-weight: 600; cursor: pointer; }
+    .cards a { color: #93c5fd; }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: .75rem; }
+    #panes { display: contents; }
+    iframe { flex: 1; width: 100%; height: 100%; border: 0; background: #111827; }
+    :focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 900px) { .cards { grid-template-columns: minmax(0, 1fr); } #shared-status { margin-left: .75rem; } }
+  </style>
+</head>
+<body>
+  <nav aria-label="ESI tools">
+    <ul>
+      <li><button type="button" data-pane="overview" aria-current="page">ESI tools</button></li>
+      <li><button type="button" data-pane="esi-schema">Schema browser</button></li>
+      <li><button type="button" data-pane="market-groups">Market groups</button></li>
+      <li><button type="button" data-pane="market-orders">Market orders</button></li>
+    </ul>
+    <p id="shared-status" role="status" aria-live="polite">Shared schema: none loaded.</p>
+  </nav>
+  <main>
+    <section id="overview" aria-label="Tool overview">
+      <header>
+        <h1>EVE ESI tools</h1>
+        <p class="intro">Local pages for browsing the EVE ESI OpenAPI schema and downloading market data. Pick a tool from the nav bar; it opens in the pane below and keeps its state while you switch between tools.</p>
+        <p class="help">Fetch or open a schema in the Schema browser; it is shared with both market tools. A new schema resets their datasets after any ongoing operation finishes. All data stays in this page until reload. ESI access requires an internet connection and browser permission for cross-origin requests; no EVE account or authentication is needed.</p>
+      </header>
+      <div class="cards">
+        <section aria-labelledby="schema-card-heading">
+          <h2 id="schema-card-heading">Schema browser</h2>
+          <p class="help">Fetch or open an ESI OpenAPI schema, browse its operations by tag, inspect raw and dereferenced JSON, and save schemas, compatibility dates, and the changelog.</p>
+          <div class="actions">
+            <button type="button" data-pane="esi-schema">Open schema browser</button>
+            <a href="esi-schema.html">Open standalone</a>
+          </div>
+        </section>
+        <section aria-labelledby="groups-card-heading">
+          <h2 id="groups-card-heading">Market groups</h2>
+          <p class="help">Download every market group with its parent-child path and type IDs, in a selectable language, and save the dataset as JSON.</p>
+          <div class="actions">
+            <button type="button" data-pane="market-groups">Open market groups</button>
+          </div>
+        </section>
+        <section aria-labelledby="orders-card-heading">
+          <h2 id="orders-card-heading">Market orders</h2>
+          <p class="help">Download all market orders for a region, resolve IDs to names, and calculate 5% buy and sell price summaries for a region, system, or location.</p>
+          <div class="actions">
+            <button type="button" data-pane="market-orders">Open market orders</button>
+          </div>
+        </section>
+      </div>
+    </section>
+    <div id="panes"></div>
+  </main>
+  <script>
+    "use strict";
+
+    const TOOLS = {
+      "esi-schema": { title: "ESI schema browser", src: "esi-schema.html" },
+      "market-groups": { title: "EVE market groups", src: "market-groups.html" },
+      "market-orders": { title: "EVE market orders", src: "market-orders.html" },
+    };
+    const $ = (id) => document.getElementById(id);
+    const frames = new Map();
+    const readyFrames = new Set();
+    const state = { pane: "overview", sharedSchema: null };
+
+    function isObject(value) {
+      return value !== null && typeof value === "object" && !Array.isArray(value);
+    }
+
+    function frameFor(paneId) {
+      if (!frames.has(paneId)) {
+        const frame = document.createElement("iframe");
+        frame.src = TOOLS[paneId].src;
+        frame.title = TOOLS[paneId].title;
+        frame.hidden = true;
+        $("panes").append(frame);
+        frames.set(paneId, frame);
+      }
+      return frames.get(paneId);
+    }
+
+    function showPane(paneId) {
+      state.pane = paneId;
+      if (paneId !== "overview") frameFor(paneId);
+      $("overview").hidden = paneId !== "overview";
+      for (const [frameId, frame] of frames) frame.hidden = frameId !== paneId;
+      for (const button of document.querySelectorAll("nav button[data-pane]")) {
+        if (button.dataset.pane === paneId) button.setAttribute("aria-current", "page");
+        else button.removeAttribute("aria-current");
+      }
+    }
+
+    function senderId(source) {
+      for (const [frameId, frame] of frames) {
+        if (frame.contentWindow === source) return frameId;
+      }
+      return null;
+    }
+
+    function sendSharedSchema(paneId) {
+      frames.get(paneId).contentWindow.postMessage({ type: "esi-schema-shared", ...state.sharedSchema }, "*");
+    }
+
+    function receiveMessage(source, data) {
+      const paneId = senderId(source);
+      if (!paneId || !isObject(data)) return;
+      if (data.type === "esi-tool-ready") {
+        if (paneId === "esi-schema") return;
+        readyFrames.add(paneId);
+        if (state.sharedSchema) sendSharedSchema(paneId);
+        return;
+      }
+      if (paneId !== "esi-schema" || data.type !== "esi-schema-loaded" || !isObject(data.document) || typeof data.source !== "string" ||
+          (data.timestamp !== null && typeof data.timestamp !== "string")) return;
+      state.sharedSchema = { document: data.document, source: data.source, timestamp: data.timestamp };
+      $("shared-status").textContent = `Shared schema: ${data.source} · received ${data.timestamp || "unknown"}`;
+      for (const frameId of readyFrames) sendSharedSchema(frameId);
+    }
+
+    window.addEventListener("message", (event) => receiveMessage(event.source, event.data));
+    for (const button of document.querySelectorAll("button[data-pane]")) {
+      button.addEventListener("click", () => showPane(button.dataset.pane));
+    }
+  </script>
+</body>
+</html>

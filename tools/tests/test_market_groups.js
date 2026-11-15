@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const html = fs.readFileSync(path.join(__dirname, "../market-groups.html"), "utf8");
+const html = fs.readFileSync(path.join(__dirname, "../esi/market-groups.html"), "utf8");
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
 function browser() {
@@ -260,23 +260,18 @@ test("a failed run clears an old dataset and keeps export disabled", async () =>
   assert.match(context.document.getElementById("groups-status").textContent, /503/);
 });
 
-test("latest schema fetch selects the newest date and enables market downloads", async () => {
+test("shared schema enables downloads and defers replacement while busy", () => {
   const context = browser();
-  const calls = [];
-  context.fetch = async (url) => {
-    const parsed = new URL(url);
-    calls.push(parsed);
-    return {
-      ok: true, headers: { get: () => null },
-      json: async () => parsed.pathname.endsWith("compatibility-dates")
-        ? { compatibility_dates: ["2025-01-01", "2026-08-18", "2026-01-01"] }
-        : schemaFixture(),
-    };
-  };
-  await context.document.getElementById("fetch-schema").click();
-  assert.equal(calls[1].searchParams.get("compatibility_date"), "2026-08-18");
+  context.input = schemaFixture();
+  evaluate(context, `receiveSharedSchema({document: input, source: "browser", timestamp: null})`);
   assert.equal(context.document.getElementById("fetch-groups").disabled, false);
-  assert.match(context.document.getElementById("schema-status").textContent, /2026-08-18/);
+  evaluate(context, `state.loadingGroups = true; state.dataset = {old: true};
+    receiveSharedSchema({document: {...input, info: {version: "2026-09-01"}}, source: "new", timestamp: null})`);
+  assert.equal(evaluate(context, "state.schema.compatibilityDate"), "2026-08-18");
+  assert.equal(evaluate(context, "state.dataset.old"), true);
+  evaluate(context, "state.loadingGroups = false; updateControls()");
+  assert.equal(evaluate(context, "state.schema.compatibilityDate"), "2026-09-01");
+  assert.equal(evaluate(context, "state.dataset"), null);
 });
 
 test("duplicate IDs and invalid list expiry fail before detail requests", async () => {
@@ -309,16 +304,16 @@ test("an empty ID list yields an empty dataset without detail requests", async (
   assert.equal(result.expires_at, null);
 });
 
-test("invalid schema file leaves the previous schema and dataset usable", async () => {
+test("incompatible shared schema disables downloads but preserves the previous dataset", () => {
   const context = browser();
   context.input = schemaFixture();
   evaluate(context, "state.schema = parseMarketSchema(input, 'file'); state.dataset = {old: true}");
-  const target = { files: [{ name: "broken.json", text: async () => "{" }], value: "broken.json" };
-  await context.document.getElementById("schema-file").change({ target });
+  evaluate(context, `receiveSharedSchema({document: {...input, paths: {}}, source: "browser", timestamp: null})`);
   assert.equal(evaluate(context, "state.dataset.old"), true);
-  assert.equal(evaluate(context, "state.schema.compatibilityDate"), "2026-08-18");
+  assert.equal(evaluate(context, "state.schema"), null);
   assert.equal(context.document.getElementById("save-groups").disabled, false);
-  assert.match(context.document.getElementById("schema-status").textContent, /Could not open/);
+  assert.equal(context.document.getElementById("fetch-groups").disabled, true);
+  assert.match(context.document.getElementById("schema-status").textContent, /missing GET operation/);
 });
 
 test("saved filename uses the current UTC date rather than the dataset receipt date", () => {

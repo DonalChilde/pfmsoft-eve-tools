@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const html = fs.readFileSync(path.join(__dirname, "../market-orders.html"), "utf8");
+const html = fs.readFileSync(path.join(__dirname, "../esi/market-orders.html"), "utf8");
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
 function browser() {
@@ -48,6 +48,25 @@ function schemaFixture() {
     },
   };
 }
+
+test("shared schema enables region downloads and waits for a busy operation", () => {
+  const c = browser();
+  c.input = schemaFixture();
+  run(c, `receiveSharedSchema({document: input, source: "browser", timestamp: null})`);
+  assert.equal(c.document.getElementById("fetch-regions").disabled, false);
+  run(c, `state.busy = true; state.dataset = {old: true};
+    receiveSharedSchema({document: {...input, info: {version: "2026-09-01"}}, source: "new", timestamp: null})`);
+  assert.equal(run(c, "state.schema.compatibilityDate"), "2026-08-18");
+  assert.equal(run(c, "state.dataset.old"), true);
+  run(c, "state.busy = false; updateControls()");
+  assert.equal(run(c, "state.schema.compatibilityDate"), "2026-09-01");
+  assert.equal(run(c, "state.dataset"), null);
+  run(c, `state.dataset = {old: true}; receiveSharedSchema({document: {...input, paths: {}}, source: "bad", timestamp: null})`);
+  assert.equal(run(c, "state.schema"), null);
+  assert.equal(run(c, "state.dataset.old"), true);
+  assert.equal(c.document.getElementById("fetch-regions").disabled, true);
+  assert.match(c.document.getElementById("schema-status").textContent, /missing operation/);
+});
 
 function order(id, price, volume, buy, overrides = {}) {
   return {
