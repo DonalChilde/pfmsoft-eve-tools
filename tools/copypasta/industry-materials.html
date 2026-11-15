@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EVE Industry Materials to Markdown</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 1.5rem; }
+    h1 { margin-top: 0; font-size: 1.6rem; }
+    h2 { margin-top: 0; font-size: 1.2rem; }
+    p { line-height: 1.5; }
+    main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr)); gap: 1rem; align-items: start; }
+    section { min-width: 0; padding: 1.25rem; border: 1px solid #475569; border-radius: .5rem; background: #1e293b; }
+    label { display: block; margin: .75rem 0 .35rem; font-weight: 600; }
+    .activity-selector { margin: 0 0 1rem; padding: .75rem; border: 1px solid #475569; }
+    .activity-options { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
+    .activity-options label { display: flex; align-items: center; gap: .4rem; margin: 0; font-weight: 400; cursor: pointer; }
+    textarea, input { width: 100%; padding: .65rem; border: 1px solid #94a3b8; border-radius: .25rem; background: #0f172a; color: #f1f5f9; font: inherit; }
+    .activity-options input { width: auto; margin: 0; }
+    textarea { min-height: 23rem; resize: vertical; font: .9rem/1.5 monospace; tab-size: 4; }
+    #markdown-output { min-height: 34rem; white-space: pre; }
+    button { margin: .75rem .5rem 0 0; padding: .65rem 1rem; border: 0; border-radius: .25rem; background: #93c5fd; color: #0f172a; font: inherit; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .help, #status, #input-error, #metadata-error { color: #b9c4d4; font-size: .9rem; }
+    #input-error, #metadata-error { color: #fecaca; }
+    #metadata-fields { display: flex; flex-wrap: wrap; align-items: start; gap: .75rem; }
+    #metadata-fields label { width: 8rem; max-width: 100%; margin: 0; font-size: .9rem; }
+    #metadata-fields label.result-name-field { width: 28rem; }
+    #metadata-fields input { display: block; margin-top: .35rem; padding: .4rem .5rem; }
+    #invention-note { color: #fde68a; }
+    :focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
+    @media (max-width: 650px) {
+      body { padding: .75rem; }
+      textarea { min-height: 16rem; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Industry Materials to Markdown</h1>
+    <p class="help">Paste the text copied from an EVE Online Industry activity. The tool runs locally in this browser; it does not use ESI or store data. Activity settings are included as metadata and do not change the pasted material quantities.</p>
+  </header>
+  <main>
+    <section aria-labelledby="input-heading">
+      <h2 id="input-heading">Industry input</h2>
+      <fieldset class="activity-selector">
+        <legend>Activity</legend>
+        <div class="activity-options">
+          <label><input type="radio" name="activity" value="Manufacturing" checked> Manufacturing</label>
+          <label><input type="radio" name="activity" value="Invention"> Invention</label>
+          <label><input type="radio" name="activity" value="Copying"> Copying</label>
+          <label><input type="radio" name="activity" value="Researching ME"> ME</label>
+          <label><input type="radio" name="activity" value="Researching TE"> TE</label>
+        </div>
+      </fieldset>
+      <div id="metadata-panel" hidden>
+        <div id="metadata-fields"></div>
+        <p id="invention-note" class="help" hidden>Verify the invention result name before using this output; some blueprints invent into a different name.</p>
+        <p id="metadata-error" role="alert" hidden></p>
+      </div>
+      <label for="industry-input">Paste copied activity details</label>
+      <textarea id="industry-input" spellcheck="false" placeholder="Armor Command Burst I Blueprint&#9;43547&#10;&#10;Minerals&#10;Item&#9;Required&#9;Available&#9;Est. Unit price&#9;typeID&#10;..."></textarea>
+      <p class="help">The selected activity controls the output and required fields. Paste the blueprint line first, followed by the section names and tab-separated material rows; the copied text has no activity heading. Trailing empty tab columns on headings are supported.</p>
+      <button id="parse-button" type="button">Parse</button>
+      <button id="generate-button" type="button">Generate Markdown</button>
+      <p id="input-error" role="alert" hidden></p>
+    </section>
+    <section aria-labelledby="output-heading">
+      <h2 id="output-heading">Markdown output</h2>
+      <p class="help">Review the Markdown below, then copy it or select the text to copy manually. A Multibuy table combines required quantities from all material sections. It does not consider available materials or subtract them from the required quantities.</p>
+      <label for="markdown-output">Formatted Markdown</label>
+      <textarea id="markdown-output" readonly spellcheck="false" aria-describedby="status"></textarea>
+      <button id="copy-button" type="button" disabled>Copy Markdown</button>
+      <p id="status" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script>
+    "use strict";
+
+    const ACTIVITY_NAMES = new Map([
+      ["manufacturing", "Manufacturing"],
+      ["copying", "Copying"],
+      ["researching me", "Researching ME"],
+      ["researching te", "Researching TE"],
+      ["invention", "Invention"],
+    ]);
+
+    function industryError(lineNumber, message) {
+      return new Error(`Line ${lineNumber}: ${message}`);
+    }
+
+    function parseInteger(value, lineNumber, label, allowZero = true) {
+      const trimmed = value.trim();
+      if (!/^(?:\d{1,3}(?:,\d{3})+|\d+)$/.test(trimmed)) {
+        throw lineNumber
+          ? industryError(lineNumber, `${label} must be a whole number.`)
+          : new Error(`${label} must be a whole number.`);
+      }
+      const parsed = BigInt(trimmed.replaceAll(",", ""));
+      if (!allowZero && parsed === 0n) {
+        throw lineNumber
+          ? industryError(lineNumber, `${label} must be greater than zero.`)
+          : new Error(`${label} must be greater than zero.`);
+      }
+      return parsed;
+    }
+
+    function parseIndustryInput(text, selectedActivity) {
+      const activity = ACTIVITY_NAMES.get(String(selectedActivity ?? "").trim().toLowerCase());
+      if (!activity) {
+        throw new Error("Select a valid Industry activity.");
+      }
+
+      const lines = text.split(/\r?\n/);
+      const nonblank = lines
+        .map((value, index) => ({ value: value.trim(), lineNumber: index + 1 }))
+        .filter((line) => line.value !== "");
+      if (nonblank.length === 0) {
+        throw new Error("Paste a blueprint line.");
+      }
+
+      const blueprintLine = nonblank[0];
+      const blueprintMatch = blueprintLine.value.match(/^(.+?)(?:\t+|\s+)(\d+)$/);
+      if (!blueprintMatch) {
+        throw industryError(blueprintLine.lineNumber, "Blueprint line must end with its numeric typeID.");
+      }
+      const blueprintName = blueprintMatch[1].trim();
+      if (!blueprintName) {
+        throw industryError(blueprintLine.lineNumber, "Blueprint name is required.");
+      }
+
+      const sections = [];
+      let section = null;
+      let hasHeader = false;
+      for (let index = blueprintLine.lineNumber; index < lines.length; index += 1) {
+        const lineNumber = index + 1;
+        const line = lines[index].trim();
+        if (!line) continue;
+
+        const cells = lines[index].split("\t").map((cell) => cell.trim());
+        if (cells.length === 5
+          && cells[0]?.toLowerCase() === "item"
+          && cells[1]?.toLowerCase() === "required"
+          && cells[2]?.toLowerCase() === "available"
+          && cells[3]?.toLowerCase() === "est. unit price"
+          && cells[4]?.toLowerCase() === "typeid") {
+          if (!section) {
+            throw industryError(lineNumber, "Material table header needs a section name.");
+          }
+          hasHeader = true;
+          continue;
+        }
+
+        if (!line.includes("\t")) {
+          if (/^no item selected$/i.test(line)) continue;
+          const nextLine = lines.slice(index + 1).find((value) => value.trim() !== "");
+          const nextCells = nextLine?.split("\t").map((cell) => cell.trim());
+          if (!nextCells
+            || nextCells.length !== 5
+            || nextCells[0]?.toLowerCase() !== "item"
+            || nextCells[1]?.toLowerCase() !== "required"
+            || nextCells[2]?.toLowerCase() !== "available"
+            || nextCells[3]?.toLowerCase() !== "est. unit price"
+            || nextCells[4]?.toLowerCase() !== "typeid") {
+            throw industryError(lineNumber, "Section name must be followed by a material table header.");
+          }
+          section = { name: line, rows: [] };
+          sections.push(section);
+          hasHeader = false;
+          continue;
+        }
+
+        if (!hasHeader || !section) {
+          throw industryError(lineNumber, "Material row appears before a section header.");
+        }
+        if (cells.length !== 5) {
+          throw industryError(lineNumber, "Material rows must have five tab-separated columns.");
+        }
+        const [name, required, available, price, typeId] = cells;
+        if (!name || !typeId || !/^\d+$/.test(typeId)) {
+          throw industryError(lineNumber, "Material name and numeric typeID are required.");
+        }
+        parseInteger(required, lineNumber, "Required quantity");
+        if (available && !/^(?:\d{1,3}(?:,\d{3})+|\d+)$/.test(available)) {
+          throw industryError(lineNumber, "Available quantity must be a whole number or blank.");
+        }
+        if (price && !/^(?:(?:\d{1,3}(?:,\d{3})+|\d+))(?:\.\d+)?$/.test(price)) {
+          throw industryError(lineNumber, "Estimated unit price must be a number or blank.");
+        }
+        section.rows.push({ name, required, available, price, typeId, lineNumber });
+      }
+
+      return {
+        activity,
+        blueprintName,
+        blueprintTypeId: blueprintMatch[2],
+        sections: sections.filter((group) => group.rows.length > 0 || group.name.toLowerCase() === "optional items"),
+      };
+    }
+
+    function escapeMarkdownCell(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\\", "\\\\")
+        .replaceAll("|", "\\|");
+    }
+
+    function markdownTable(headers, rows, rightAlignedColumns = []) {
+      const values = [headers, ...rows].map((row) => row.map(escapeMarkdownCell));
+      const rightAligned = new Set(rightAlignedColumns);
+      const widths = headers.map((header, index) =>
+        Math.max(header.length, ...values.slice(1).map((row) => row[index]?.length ?? 0)));
+      const formatRow = (row) => `| ${row.map((cell, index) => cell.padEnd(widths[index])).join(" | ")} |`;
+      return [
+        formatRow(headers),
+        `| ${widths.map((width, index) =>
+          rightAligned.has(index) ? `${"-".repeat(Math.max(1, width - 1))}:` : "-".repeat(width)).join(" | ")} |`,
+        ...values.slice(1).map(formatRow),
+      ].join("\n");
+    }
+
+    function getBaseBlueprintName(name) {
+      return name.replace(/\s+Blueprint$/i, "").trim();
+    }
+
+    function defaultInventionResult(name) {
+      const base = getBaseBlueprintName(name);
+      return /\bI$/.test(base) ? base.replace(/\bI$/, "II") : base;
+    }
+
+    function metadataValues(parsed, getValue) {
+      const baseName = getBaseBlueprintName(parsed.blueprintName);
+      const values = { baseName };
+      if (parsed.activity === "Manufacturing") {
+        values.runs = parseInteger(getValue("runs"), 0, "Runs", false);
+        values.portionSize = parseInteger(getValue("portion-size"), 0, "Portion Size", false);
+      } else if (parsed.activity === "Copying") {
+        values.runs = parseInteger(getValue("runs"), 0, "Runs", false);
+        values.runsPerCopy = parseInteger(getValue("runs-per-copy"), 0, "Runs per copy", false);
+      } else if (parsed.activity === "Invention") {
+        values.runs = parseInteger(getValue("runs"), 0, "Runs", false);
+        values.me = parseInteger(getValue("me"), 0, "ME");
+        values.te = parseInteger(getValue("te"), 0, "TE");
+        values.resultRuns = parseInteger(getValue("result-runs"), 0, "Result Runs", false);
+        values.resultName = getValue("result-name").trim();
+        if (!values.resultName) throw new Error("Result Blueprint Name is required.");
+      }
+      return values;
+    }
+
+    function buildIndustryMarkdown(parsed, metadata) {
+      const titleName = metadata.baseName;
+      const output = [`## ${escapeMarkdownCell(parsed.activity)} - ${escapeMarkdownCell(titleName)}`, ""];
+      const attributes = [
+        ["Blueprint", `${parsed.blueprintName} ${parsed.blueprintTypeId}`],
+        ["Activity", parsed.activity],
+      ];
+
+      if (parsed.activity === "Manufacturing") {
+        attributes.push(
+          ["Runs", metadata.runs],
+          ["Portion Size", metadata.portionSize],
+          ["Result", metadata.baseName],
+          ["Units", metadata.runs * metadata.portionSize],
+        );
+      } else if (parsed.activity === "Copying") {
+        attributes.push(["Runs", metadata.runs], ["Runs per copy", metadata.runsPerCopy]);
+      } else if (parsed.activity === "Invention") {
+        attributes.push(
+          ["Runs", metadata.runs],
+          ["Result", metadata.resultName],
+          ["ME", metadata.me],
+          ["TE", metadata.te],
+          ["Result Runs", metadata.resultRuns],
+        );
+      }
+      output.push(markdownTable(["Attribute", "Value"], attributes));
+
+      for (const group of parsed.sections) {
+        output.push("", escapeMarkdownCell(group.name), "");
+        output.push(markdownTable(
+          ["Item", "Required", "Available", "Est. Unit price", "typeID"],
+          group.rows.map((row) => [row.name, row.required, row.available, row.price, row.typeId]),
+          [1, 2, 3, 4],
+        ));
+      }
+
+      const totals = new Map();
+      for (const group of parsed.sections) {
+        for (const row of group.rows) {
+          const quantity = parseInteger(row.required, row.lineNumber, "Required quantity");
+          totals.set(row.name, (totals.get(row.name) ?? 0n) + quantity);
+        }
+      }
+      if (totals.size > 0) {
+        output.push("", "Multibuy", "");
+        output.push(markdownTable(
+          ["Name", "Quantity"],
+          Array.from(totals, ([name, quantity]) => [name, quantity.toString()]),
+          [1],
+        ));
+      }
+      return output.join("\n");
+    }
+
+    const inputElement = document.getElementById("industry-input");
+    const inputError = document.getElementById("input-error");
+    const metadataPanel = document.getElementById("metadata-panel");
+    const metadataFields = document.getElementById("metadata-fields");
+    const inventionNote = document.getElementById("invention-note");
+    const metadataError = document.getElementById("metadata-error");
+    const markdownOutput = document.getElementById("markdown-output");
+    const copyButton = document.getElementById("copy-button");
+    const status = document.getElementById("status");
+    const activityRadios = Array.from(document.querySelectorAll('input[name="activity"]'));
+    let selectedActivity = activityRadios.find((radio) => radio.checked)?.value ?? "Manufacturing";
+    let suggestedInventionResult = "";
+    let parsedInput = null;
+
+    function fieldDefinitions(activity, blueprintName) {
+      if (activity === "Manufacturing") {
+        return [
+          { id: "runs", label: "Runs", required: true },
+          { id: "portion-size", label: "Portion Size", value: "1", required: true },
+        ];
+      }
+      if (activity === "Copying") {
+        return [
+          { id: "runs", label: "Runs", required: true },
+          { id: "runs-per-copy", label: "Runs per copy", required: true },
+        ];
+      }
+      if (activity === "Invention") {
+        return [
+          { id: "runs", label: "Runs", required: true },
+          { id: "me", label: "ME", value: "2", required: true },
+          { id: "te", label: "TE", value: "4", required: true },
+          { id: "result-runs", label: "Result Runs", value: "10", required: true },
+          { id: "result-name", label: "Result Blueprint Name", value: defaultInventionResult(blueprintName), required: true },
+        ];
+      }
+      return [];
+    }
+
+    function renderMetadataFields() {
+      metadataFields.replaceChildren();
+      const blueprintName = parsedInput?.blueprintName ?? "";
+      const definitions = fieldDefinitions(selectedActivity, blueprintName);
+      for (const definition of definitions) {
+        const label = document.createElement("label");
+        label.htmlFor = `field-${definition.id}`;
+        label.textContent = definition.label;
+        if (definition.id === "result-name") label.className = "result-name-field";
+        const field = document.createElement("input");
+        field.id = `field-${definition.id}`;
+        field.dataset.field = definition.id;
+        field.type = definition.id === "result-name" ? "text" : "number";
+        field.min = definition.id === "me" || definition.id === "te" ? "0" : "1";
+        field.step = "1";
+        field.required = Boolean(definition.required);
+        field.value = definition.value ?? "";
+        field.addEventListener("input", () => {
+          metadataError.hidden = true;
+          markdownOutput.value = "";
+          copyButton.disabled = true;
+          status.textContent = "Activity details changed. Generate Markdown again.";
+        });
+        label.append(field);
+        metadataFields.append(label);
+      }
+      suggestedInventionResult = selectedActivity === "Invention"
+        ? defaultInventionResult(blueprintName)
+        : "";
+      inventionNote.hidden = selectedActivity !== "Invention";
+      metadataPanel.hidden = definitions.length === 0;
+      document.getElementById("generate-button").hidden = definitions.length === 0;
+    }
+
+    function handleActivityChange(activity) {
+      selectedActivity = activity;
+      if (parsedInput) parsedInput.activity = selectedActivity;
+      renderMetadataFields();
+      metadataError.hidden = true;
+      markdownOutput.value = "";
+      copyButton.disabled = true;
+
+      if (!parsedInput) {
+        status.textContent = "Activity selected. Paste the Industry details and select Parse.";
+      } else if (selectedActivity === "Researching ME" || selectedActivity === "Researching TE") {
+        generateMarkdown();
+      } else {
+        status.textContent = "Activity changed. Enter its details, then generate Markdown.";
+      }
+    }
+
+    function generateMarkdown() {
+      if (!parsedInput) return;
+      metadataError.hidden = true;
+      try {
+        const metadata = metadataValues(parsedInput, (id) =>
+          metadataFields.querySelector(`[data-field="${id}"]`)?.value ?? "");
+        markdownOutput.value = buildIndustryMarkdown(parsedInput, metadata);
+        copyButton.disabled = false;
+        status.textContent = "Markdown is ready to copy.";
+      } catch (error) {
+        metadataError.textContent = error.message;
+        metadataError.hidden = false;
+        markdownOutput.value = "";
+        copyButton.disabled = true;
+        status.textContent = "";
+      }
+    }
+
+    document.getElementById("parse-button").addEventListener("click", () => {
+      inputError.hidden = true;
+      try {
+        parsedInput = parseIndustryInput(inputElement.value, selectedActivity);
+        if (selectedActivity === "Invention") {
+          const resultName = metadataFields.querySelector('[data-field="result-name"]');
+          const nextSuggestion = defaultInventionResult(parsedInput.blueprintName);
+          if (resultName && (!resultName.value || resultName.value === suggestedInventionResult)) {
+            resultName.value = nextSuggestion;
+          }
+          suggestedInventionResult = nextSuggestion;
+        }
+        metadataError.hidden = true;
+        markdownOutput.value = "";
+        copyButton.disabled = true;
+        if (parsedInput.activity === "Researching ME" || parsedInput.activity === "Researching TE") {
+          generateMarkdown();
+        } else {
+          status.textContent = "Parsed successfully. Enter activity details, then generate Markdown.";
+        }
+      } catch (error) {
+        inputError.textContent = error.message;
+        inputError.hidden = false;
+      }
+    });
+
+    for (const radio of activityRadios) {
+      radio.addEventListener("change", () => {
+        if (radio.checked) handleActivityChange(radio.value);
+      });
+    }
+
+    renderMetadataFields();
+
+    document.getElementById("generate-button").addEventListener("click", generateMarkdown);
+    document.getElementById("copy-button").addEventListener("click", async () => {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");
+        await navigator.clipboard.writeText(markdownOutput.value);
+        status.textContent = "Markdown copied to the clipboard.";
+      } catch (error) {
+        status.textContent = `${error.message} Select the Markdown output above and copy it manually.`;
+        markdownOutput.focus();
+        markdownOutput.select();
+      }
+    });
+  </script>
+</body>
+</html>

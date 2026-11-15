@@ -6,7 +6,8 @@ This is a collection of html tools related to Eve Online. The tools are ment to 
 
 - Open [Copy Paste tools](tools/copypasta/index.html) locally to navigate between tools.
   Switching panes preserves tool state until the index is reloaded.
-- Multibuy
+- [Multi-buy](tools/copypasta/multi-buy.html)
+- [Industry Materials](tools/copypasta/industry-materials.html): convert copied Industry material lists to Markdown, including a combined Multibuy table.
 
 ## Esi Tools
 

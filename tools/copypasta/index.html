@@ -27,6 +27,7 @@
     <ul>
       <li><button type="button" data-pane="overview" aria-current="page">Copy Paste tools</button></li>
       <li><button type="button" data-pane="multi-buy">Multi-buy</button></li>
+      <li><button type="button" data-pane="industry-materials">Industry Materials</button></li>
     </ul>
   </nav>
   <main>
@@ -45,6 +46,14 @@
             <a href="multi-buy.html">Open standalone</a>
           </div>
         </section>
+        <section aria-labelledby="industry-materials-heading">
+          <h2 id="industry-materials-heading">Industry Materials</h2>
+          <p class="help">Convert material lists copied from an EVE Industry activity into Markdown, including activity details and a combined Multibuy table.</p>
+          <div class="actions">
+            <button type="button" data-pane="industry-materials">Open Industry Materials</button>
+            <a href="industry-materials.html">Open standalone</a>
+          </div>
+        </section>
       </div>
     </section>
     <div id="panes"></div>
@@ -56,6 +65,7 @@
     // Local file frames have opaque origins, so the clipboard policy needs *.
     initializeToolNavigation({
       "multi-buy": { title: "EVE multi-buy helper", src: "multi-buy.html", allow: "clipboard-write *" },
+      "industry-materials": { title: "EVE Industry Materials to Markdown", src: "industry-materials.html", allow: "clipboard-write *" },
     });
   </script>
 </body>

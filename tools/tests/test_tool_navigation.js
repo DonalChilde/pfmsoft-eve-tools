@@ -21,12 +21,14 @@ test("copy-paste navigation keeps a single tool frame alive between pane switche
   }
   const home = button("overview");
   const tool = button("multi-buy");
+  const industry = button("industry-materials");
   const card = button("multi-buy");
+  const industryCard = button("industry-materials");
   const overview = {};
   const panes = { children: [], append(frame) { this.children.push(frame); } };
   const document = {
     getElementById(id) { return id === "overview" ? overview : panes; },
-    querySelectorAll(selector) { return selector.startsWith("nav ") ? [home, tool] : [home, tool, card]; },
+    querySelectorAll(selector) { return selector.startsWith("nav ") ? [home, tool, industry] : [home, tool, industry, card, industryCard]; },
     createElement() {
       return { setAttribute(name, value) { this[name] = value; } };
     },
@@ -51,4 +53,14 @@ test("copy-paste navigation keeps a single tool frame alive between pane switche
   assert.equal(panes.children.length, 1);
   assert.equal(frame.savedState, "inventory");
   assert.equal(frame.hidden, false);
+  industryCard.click();
+  const industryFrame = panes.children[1];
+  assert.equal(industryFrame.src, "industry-materials.html");
+  assert.equal(industryFrame.title, "EVE Industry Materials to Markdown");
+  assert.equal(industryFrame.allow, "clipboard-write *");
+  assert.equal(industryFrame.hidden, false);
+  home.click();
+  industry.click();
+  assert.equal(panes.children.length, 2);
+  assert.equal(industryFrame.hidden, false);
 });

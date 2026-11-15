@@ -2,6 +2,8 @@
 
 This prompt is for a copy paste tool for the industry matrials list that can be copied from the `Industry` display in game.
 
+## Sample Input
+
 Some sample inputs:
 
 Manufacturing
@@ -109,25 +111,24 @@ Nanotransistors	324	0	3458.04	16681
 Hypersynaptic Fibers	167	0	6037.57	16682
 ```
 
-as output, i would like well formatted markdown
+## Desired Output
+
+as output, i would like well formatted markdown. Display activity attributes in a
+two-column Attribute/Value table for compatibility with VS Code and GitHub previews.
 
 Using the first manufacturing example:
 
 ```text
 ## Manufacturing -  Armor Command Burst I
 
-Blueprint
-: Armor Command Burst I Blueprint 43547
-Activity
-: Manufacturing
-Runs
-: 10
-Portion Size
-: 1
-Result
-: Armor Command Burst I
-Units
-: 10
+| Attribute    | Value                                |
+| ------------ | ------------------------------------ |
+| Blueprint    | Armor Command Burst I Blueprint 43547|
+| Activity     | Manufacturing                        |
+| Runs         | 10                                   |
+| Portion Size | 1                                    |
+| Result       | Armor Command Burst I                |
+| Units        | 10                                   |
 
 Minerals
 
@@ -157,23 +158,19 @@ Multibuy
 ```
 
 Invention
+
 ```text
 ## Invention - Armor Command Burst I
 
-Blueprint
-: Armor Command Burst I Blueprint 43547
-Activity
-: Invention
-Runs
-: 3
-Result
-: Armor Command Burst II
-ME
-: 2
-TE
-: 4
-Result Runs
-: 10
+| Attribute   | Value                                |
+| ----------- | ------------------------------------ |
+| Blueprint   | Armor Command Burst I Blueprint 43547|
+| Activity    | Invention                            |
+| Runs        | 3                                    |
+| Result      | Armor Command Burst II               |
+| ME          | 2                                    |
+| TE          | 4                                    |
+| Result Runs | 10                                   |
 
 Datacores
 
@@ -187,6 +184,7 @@ Optional items
 | Item | Required | Available | Est. Unit price | typeID |
 | ---- | -------- | --------- | --------------- | ------ |
 ```
+
 - Note that for manufacturing Runs and Portion Size will have to be input by the user. Portion size can default to 1.
 - for invention, runs, me, te, and result runs will have to be input by the user. default values are me=2, te=4, result runs=10.
 - for copies, the attributes are Runs, and Runs per copy.
