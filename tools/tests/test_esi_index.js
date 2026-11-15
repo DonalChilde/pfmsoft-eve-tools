@@ -9,6 +9,7 @@ const vm = require("node:vm");
 const html = fs.readFileSync(path.join(__dirname, "../esi/index.html"), "utf8");
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const commonScript = fs.readFileSync(path.join(__dirname, "../esi/esi-common.js"), "utf8");
+const navigationScript = fs.readFileSync(path.join(__dirname, "../tool-navigation.js"), "utf8");
 
 test("the index relays schema browser updates to ready and later-opened market panes", () => {
   const elements = new Map();
@@ -25,6 +26,7 @@ test("the index relays schema browser updates to ready and later-opened market p
   const window = { addEventListener(type, handler) { this[type] = handler; } };
   const c = vm.createContext({ document, window });
   vm.runInContext(commonScript, c);
+  vm.runInContext(navigationScript, c);
   vm.runInContext(script, c);
   vm.runInContext('showPane("esi-schema"); showPane("market-groups")', c);
   const schema = vm.runInContext('frames.get("esi-schema").contentWindow', c);

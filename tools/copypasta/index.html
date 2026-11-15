@@ -1,52 +1,62 @@
 <!doctype html>
-<!--
-  Copy Paste tools index. Open directly in a modern browser.
-  Static landing page: no network access, scripts, or stored state.
-  The top nav bar links to each copy paste tool in this directory.
--->
+<!-- Copy-paste tools index. Open directly in a modern browser. -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EVE copy paste tools</title>
+  <link rel="stylesheet" href="../tool-navigation.css">
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #111827; color: #e5e7eb; }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 1.5rem; }
     h1 { margin-top: 0; font-size: 1.6rem; }
     h2 { margin-top: 0; font-size: 1.2rem; }
     p { line-height: 1.5; }
     .intro, .help { color: #b9c4d4; }
     .help { font-size: .9rem; }
-    nav { margin: 0 0 1.5rem; border: 1px solid #475569; border-radius: .5rem; background: #1e293b; }
-    nav ul { display: flex; flex-wrap: wrap; gap: .25rem; margin: 0; padding: .4rem; list-style: none; }
-    nav a { display: block; padding: .65rem 1rem; border-radius: .25rem; color: #e5e7eb; font-weight: 600; text-decoration: none; }
-    nav a:hover { background: #334155; }
-    nav a[aria-current="page"] { background: #93c5fd; color: #0f172a; }
-    main { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 24rem)); gap: .75rem; align-items: start; }
-    section { min-width: 0; padding: 1.25rem; border: 1px solid #475569; border-radius: .5rem; background: #1e293b; }
-    section a { color: #93c5fd; font-weight: 600; }
-    :focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
-    @media (max-width: 900px) { body { padding: 1rem; } main { grid-template-columns: minmax(0, 1fr); } }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 24rem)); gap: .75rem; align-items: start; }
+    .cards section { min-width: 0; padding: 1.25rem; border: 1px solid #475569; border-radius: .5rem; background: #1e293b; }
+    .cards button { padding: .65rem 1rem; border: 0; border-radius: .25rem; background: #93c5fd; color: #0f172a; font: inherit; font-weight: 600; cursor: pointer; }
+    .cards a { color: #93c5fd; }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: .75rem; }
+    @media (max-width: 900px) { .cards { grid-template-columns: minmax(0, 1fr); } }
   </style>
 </head>
 <body>
   <nav aria-label="Copy paste tools">
     <ul>
-      <li><a href="index.html" aria-current="page">Copy Paste tools</a></li>
-      <li><a href="multi-buy.html">Multi-buy</a></li>
+      <li><button type="button" data-pane="overview" aria-current="page">Copy Paste tools</button></li>
+      <li><button type="button" data-pane="multi-buy">Multi-buy</button></li>
     </ul>
   </nav>
-  <header>
-    <h1>EVE copy paste tools</h1>
-    <p class="intro">Local-first helpers for text copied to and from the EVE Online client. Use the nav bar to select a tool.</p>
-    <p class="help">Each tool is a standalone page that runs entirely in your browser. No ESI access or EVE account is required, and all state is lost when a page reloads.</p>
-  </header>
   <main>
-    <section aria-labelledby="multi-buy-heading">
-      <h2 id="multi-buy-heading"><a href="multi-buy.html">Multi-buy</a></h2>
-      <p class="help">Paste inventory or a material list, track what you have on hand, multiply material sets, and export a multi-buy list of only the items you still need.</p>
+    <section id="overview" aria-label="Tool overview">
+      <header>
+        <h1>EVE copy paste tools</h1>
+        <p class="intro">Local-first helpers for text copied to and from the EVE Online client. Select a tool from the nav bar to open it below.</p>
+        <p class="help">Tools run entirely in your browser and keep their state when you switch panes. No ESI access or EVE account is required. All state is lost when the page reloads.</p>
+      </header>
+      <div class="cards">
+        <section aria-labelledby="multi-buy-heading">
+          <h2 id="multi-buy-heading">Multi-buy</h2>
+          <p class="help">Paste inventory or a material list, track what you have on hand, multiply material sets, and export a multi-buy list of only the items you still need.</p>
+          <div class="actions">
+            <button type="button" data-pane="multi-buy">Open multi-buy</button>
+            <a href="multi-buy.html">Open standalone</a>
+          </div>
+        </section>
+      </div>
     </section>
+    <div id="panes"></div>
   </main>
+  <script src="../tool-navigation.js"></script>
+  <script>
+    "use strict";
+
+    // Local file frames have opaque origins, so the clipboard policy needs *.
+    initializeToolNavigation({
+      "multi-buy": { title: "EVE multi-buy helper", src: "multi-buy.html", allow: "clipboard-write *" },
+    });
+  </script>
 </body>
 </html>

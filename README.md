@@ -4,6 +4,8 @@ This is a collection of html tools related to Eve Online. The tools are ment to 
 
 ## Copy Paste tools
 
+- Open [Copy Paste tools](tools/copypasta/index.html) locally to navigate between tools.
+  Switching panes preserves tool state until the index is reloaded.
 - Multibuy
 
 ## Esi Tools
@@ -16,6 +18,8 @@ This is a collection of html tools related to Eve Online. The tools are ment to 
   provides their shared network, schema validation, status, and JSON download helpers;
   no server or build is required.
 - ESI requests identify this project using the `X-User-Agent` header.
+- Both tool indexes use [tool-navigation.js](tools/tool-navigation.js) and
+  [tool-navigation.css](tools/tool-navigation.css) for their shared navigation.
 - Schema View
 - Market Groups with Path
 - Market Orders with price summaries (5% buy and sell)

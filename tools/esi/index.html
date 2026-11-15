@@ -11,33 +11,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EVE ESI tools</title>
+  <link rel="stylesheet" href="../tool-navigation.css">
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #111827; color: #e5e7eb; }
     * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body { margin: 0; display: flex; flex-direction: column; }
     h1 { margin-top: 0; font-size: 1.6rem; }
     h2 { margin-top: 0; font-size: 1.2rem; }
     p { line-height: 1.5; }
     .intro, .help { color: #b9c4d4; }
     .help { font-size: .9rem; }
-    nav { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: .75rem; border: 1px solid #475569; border-radius: .5rem; background: #1e293b; }
-    nav ul { display: flex; flex-wrap: wrap; gap: .25rem; margin: 0; padding: .4rem; list-style: none; }
-    nav button { padding: .65rem 1rem; border: 0; border-radius: .25rem; background: none; color: #e5e7eb; font: inherit; font-weight: 600; cursor: pointer; }
-    nav button:hover { background: #334155; }
-    nav button[aria-current="page"] { background: #93c5fd; color: #0f172a; }
     #shared-status { margin: 0 .75rem 0 auto; padding: .4rem 0; font-size: .9rem; color: #b9c4d4; overflow-wrap: anywhere; }
-    main { flex: 1; min-height: 0; display: flex; }
-    #overview { flex: 1; overflow: auto; padding: 0 1.5rem 1.5rem; }
     .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 24rem)); gap: .75rem; align-items: start; }
     .cards section { min-width: 0; padding: 1.25rem; border: 1px solid #475569; border-radius: .5rem; background: #1e293b; }
     .cards button { padding: .65rem 1rem; border: 0; border-radius: .25rem; background: #93c5fd; color: #0f172a; font: inherit; font-weight: 600; cursor: pointer; }
     .cards a { color: #93c5fd; }
     .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: .75rem; }
-    #panes { display: contents; }
-    iframe { flex: 1; width: 100%; height: 100%; border: 0; background: #111827; }
-    :focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
-    [hidden] { display: none !important; }
     @media (max-width: 900px) { .cards { grid-template-columns: minmax(0, 1fr); } #shared-status { margin-left: .75rem; } }
   </style>
 </head>
@@ -86,6 +74,7 @@
     <div id="panes"></div>
   </main>
   <script src="esi-common.js"></script>
+  <script src="../tool-navigation.js"></script>
   <script>
     "use strict";
 
@@ -95,33 +84,9 @@
       "market-orders": { title: "EVE market orders", src: "market-orders.html" },
     };
     const $ = (id) => document.getElementById(id);
-    // Keep frames alive across navigation so tool state survives pane switches.
-    const frames = new Map();
+    const { frames, showPane } = initializeToolNavigation(TOOLS);
     const readyFrames = new Set();
-    const state = { pane: "overview", sharedSchema: null };
-
-    function frameFor(paneId) {
-      if (!frames.has(paneId)) {
-        const frame = document.createElement("iframe");
-        frame.src = TOOLS[paneId].src;
-        frame.title = TOOLS[paneId].title;
-        frame.hidden = true;
-        $("panes").append(frame);
-        frames.set(paneId, frame);
-      }
-      return frames.get(paneId);
-    }
-
-    function showPane(paneId) {
-      state.pane = paneId;
-      if (paneId !== "overview") frameFor(paneId);
-      $("overview").hidden = paneId !== "overview";
-      for (const [frameId, frame] of frames) frame.hidden = frameId !== paneId;
-      for (const button of document.querySelectorAll("nav button[data-pane]")) {
-        if (button.dataset.pane === paneId) button.setAttribute("aria-current", "page");
-        else button.removeAttribute("aria-current");
-      }
-    }
+    const state = { sharedSchema: null };
 
     function senderId(source) {
       for (const [frameId, frame] of frames) {
@@ -153,9 +118,6 @@
     }
 
     window.addEventListener("message", (event) => receiveMessage(event.source, event.data));
-    for (const button of document.querySelectorAll("button[data-pane]")) {
-      button.addEventListener("click", () => showPane(button.dataset.pane));
-    }
   </script>
 </body>
 </html>
