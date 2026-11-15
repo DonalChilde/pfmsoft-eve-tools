@@ -3,7 +3,8 @@
 ## Project overview
 
 - This repository contains standalone HTML tools for EVE Online, intended to be opened locally in a web browser.
-- The tools use HTML and JavaScript. Keep each tool self-contained; there is no application build system or package manifest.
+- The tools use HTML and JavaScript; there is no application build system or package manifest.
+- Keep tools usable as local browser pages. Share functionality when the project structure supports it.
 - ESI-backed tools make browser `fetch` requests and support importing and exporting JSON. Preserve their local-file workflow.
 
 ## Changes
@@ -17,3 +18,4 @@
 ## Validation
 
 - Run the full test suite with `node --test tools/tests/*.js`.
+- For significant HTML or UI changes, check the page in a real browser when practical; mocked tests do not cover every browser behavior.

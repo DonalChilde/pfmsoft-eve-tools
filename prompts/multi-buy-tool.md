@@ -95,7 +95,7 @@ Values parsed from the Eve Inventory screen should be retained for use in export
 
 ## First milestone: parse and preview
 
-Open [the standalone tool](../tools/multi-buy.html) directly in a browser. It uses
+Open [the standalone tool](../tools/copypasta/multi-buy.html) directly in a browser. It uses
 embedded CSS and JavaScript, with no server, external assets, storage, or JavaScript
 testing dependencies.
 
