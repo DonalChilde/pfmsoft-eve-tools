@@ -13,6 +13,8 @@
     p { line-height: 1.5; }
     main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr)); gap: 1rem; align-items: start; }
     section { min-width: 0; padding: 1.25rem; border: 1px solid #475569; border-radius: .5rem; background: #1e293b; }
+    .pane-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+    .pane-heading h2 { margin-bottom: 0; }
     label { display: block; margin: .75rem 0 .35rem; font-weight: 600; }
     .activity-selector { margin: 0 0 1rem; padding: .75rem; border: 1px solid #475569; }
     .activity-options { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
@@ -23,6 +25,7 @@
     #markdown-output { min-height: 34rem; white-space: pre; }
     button { margin: .75rem .5rem 0 0; padding: .65rem 1rem; border: 0; border-radius: .25rem; background: #93c5fd; color: #0f172a; font: inherit; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: .5; cursor: not-allowed; }
+    #reset-button { flex: 0 0 auto; margin: 0; padding: .4rem .75rem; }
     .help, #status, #input-error, #metadata-error { color: #b9c4d4; font-size: .9rem; }
     #input-error, #metadata-error { color: #fecaca; }
     #metadata-fields { display: flex; flex-wrap: wrap; align-items: start; gap: .75rem; }
@@ -30,6 +33,7 @@
     #metadata-fields label.result-name-field { width: 28rem; }
     #metadata-fields input { display: block; margin-top: .35rem; padding: .4rem .5rem; }
     #invention-note { color: #fde68a; }
+    #time-warning { color: #fde68a; }
     :focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
     @media (max-width: 650px) {
       body { padding: .75rem; }
@@ -44,7 +48,10 @@
   </header>
   <main>
     <section aria-labelledby="input-heading">
-      <h2 id="input-heading">Industry input</h2>
+      <div class="pane-heading">
+        <h2 id="input-heading">Industry input</h2>
+        <button id="reset-button" type="button">Reset</button>
+      </div>
       <fieldset class="activity-selector">
         <legend>Activity</legend>
         <div class="activity-options">
@@ -57,6 +64,7 @@
       </fieldset>
       <div id="metadata-panel" hidden>
         <div id="metadata-fields"></div>
+        <p id="time-warning" class="help" role="status" hidden>Time is blank. Add the activity time when available.</p>
         <p id="invention-note" class="help" hidden>Verify the invention result name before using this output; some blueprints invent into a different name.</p>
         <p id="metadata-error" role="alert" hidden></p>
       </div>
@@ -233,11 +241,15 @@
     }
 
     function metadataValues(parsed, getValue) {
-      const baseName = getBaseBlueprintName(parsed.blueprintName);
-      const values = { baseName };
+      const values = {
+        baseName: getBaseBlueprintName(parsed.blueprintName),
+        time: getValue("time").trim(),
+      };
       if (parsed.activity === "Manufacturing") {
         values.runs = parseInteger(getValue("runs"), 0, "Runs", false);
         values.portionSize = parseInteger(getValue("portion-size"), 0, "Portion Size", false);
+        values.me = parseInteger(getValue("me"), 0, "ME");
+        values.te = parseInteger(getValue("te"), 0, "TE");
       } else if (parsed.activity === "Copying") {
         values.runs = parseInteger(getValue("runs"), 0, "Runs", false);
         values.runsPerCopy = parseInteger(getValue("runs-per-copy"), 0, "Runs per copy", false);
@@ -262,23 +274,25 @@
 
       if (parsed.activity === "Manufacturing") {
         attributes.push(
+          ["ME", metadata.me],
+          ["TE", metadata.te],
           ["Runs", metadata.runs],
           ["Portion Size", metadata.portionSize],
-          ["Result", metadata.baseName],
-          ["Units", metadata.runs * metadata.portionSize],
         );
       } else if (parsed.activity === "Copying") {
         attributes.push(["Runs", metadata.runs], ["Runs per copy", metadata.runsPerCopy]);
       } else if (parsed.activity === "Invention") {
         attributes.push(
           ["Runs", metadata.runs],
-          ["Result", metadata.resultName],
           ["ME", metadata.me],
           ["TE", metadata.te],
           ["Result Runs", metadata.resultRuns],
         );
       }
+      attributes.push(["Time", metadata.time]);
+
       output.push(markdownTable(["Attribute", "Value"], attributes));
+      output.push("", "### Input");
 
       for (const group of parsed.sections) {
         output.push("", escapeMarkdownCell(group.name), "");
@@ -296,14 +310,31 @@
           totals.set(row.name, (totals.get(row.name) ?? 0n) + quantity);
         }
       }
+
+      let outputName = "";
+      let outputQuantity = "";
+      if (parsed.activity === "Manufacturing") {
+        outputName = metadata.baseName;
+        outputQuantity = (metadata.runs * metadata.portionSize).toString();
+      } else if (parsed.activity === "Copying") {
+        outputName = parsed.blueprintName;
+      } else if (parsed.activity === "Invention") {
+        outputName = `${metadata.resultName.replace(/\s+Blueprint$/i, "")} Blueprint`;
+      }
+      if (outputName) {
+        output.push("", "### Output", "");
+        output.push(markdownTable(["Name", "Quantity"], [[outputName, outputQuantity]], [1]));
+      }
+
       if (totals.size > 0) {
-        output.push("", "Multibuy", "");
+        output.push("", "### Multibuy", "");
         output.push(markdownTable(
           ["Name", "Quantity"],
           Array.from(totals, ([name, quantity]) => [name, quantity.toString()]),
           [1],
         ));
       }
+      output.push("", "### Detailed Multibuy", "", "### Detailed Output", "", "### Notes");
       return output.join("\n");
     }
 
@@ -311,6 +342,7 @@
     const inputError = document.getElementById("input-error");
     const metadataPanel = document.getElementById("metadata-panel");
     const metadataFields = document.getElementById("metadata-fields");
+    const timeWarning = document.getElementById("time-warning");
     const inventionNote = document.getElementById("invention-note");
     const metadataError = document.getElementById("metadata-error");
     const markdownOutput = document.getElementById("markdown-output");
@@ -322,28 +354,31 @@
     let parsedInput = null;
 
     function fieldDefinitions(activity, blueprintName) {
+      let definitions;
       if (activity === "Manufacturing") {
-        return [
+        definitions = [
+          { id: "me", label: "ME", required: true },
+          { id: "te", label: "TE", required: true },
           { id: "runs", label: "Runs", required: true },
           { id: "portion-size", label: "Portion Size", value: "1", required: true },
         ];
-      }
-      if (activity === "Copying") {
-        return [
+      } else if (activity === "Copying") {
+        definitions = [
           { id: "runs", label: "Runs", required: true },
           { id: "runs-per-copy", label: "Runs per copy", required: true },
         ];
-      }
-      if (activity === "Invention") {
-        return [
+      } else if (activity === "Invention") {
+        definitions = [
           { id: "runs", label: "Runs", required: true },
           { id: "me", label: "ME", value: "2", required: true },
           { id: "te", label: "TE", value: "4", required: true },
           { id: "result-runs", label: "Result Runs", value: "10", required: true },
           { id: "result-name", label: "Result Blueprint Name", value: defaultInventionResult(blueprintName), required: true },
         ];
+      } else {
+        definitions = [];
       }
-      return [];
+      return [...definitions, { id: "time", label: "Time" }];
     }
 
     function renderMetadataFields() {
@@ -358,12 +393,15 @@
         const field = document.createElement("input");
         field.id = `field-${definition.id}`;
         field.dataset.field = definition.id;
-        field.type = definition.id === "result-name" ? "text" : "number";
-        field.min = definition.id === "me" || definition.id === "te" ? "0" : "1";
-        field.step = "1";
+        field.type = definition.id === "result-name" || definition.id === "time" ? "text" : "number";
+        if (field.type === "number") {
+          field.min = definition.id === "me" || definition.id === "te" ? "0" : "1";
+          field.step = "1";
+        }
         field.required = Boolean(definition.required);
         field.value = definition.value ?? "";
         field.addEventListener("input", () => {
+          if (definition.id === "time") timeWarning.hidden = Boolean(field.value.trim());
           metadataError.hidden = true;
           markdownOutput.value = "";
           copyButton.disabled = true;
@@ -372,6 +410,8 @@
         label.append(field);
         metadataFields.append(label);
       }
+      const timeField = metadataFields.querySelector('[data-field="time"]');
+      timeWarning.hidden = Boolean(timeField?.value.trim());
       suggestedInventionResult = selectedActivity === "Invention"
         ? defaultInventionResult(blueprintName)
         : "";
@@ -395,6 +435,23 @@
       } else {
         status.textContent = "Activity changed. Enter its details, then generate Markdown.";
       }
+    }
+
+    function resetTool() {
+      inputElement.value = "";
+      activityRadios.forEach((radio) => {
+        radio.checked = radio.value === "Manufacturing";
+      });
+      selectedActivity = "Manufacturing";
+      parsedInput = null;
+      inputError.textContent = "";
+      inputError.hidden = true;
+      metadataError.textContent = "";
+      metadataError.hidden = true;
+      markdownOutput.value = "";
+      copyButton.disabled = true;
+      status.textContent = "";
+      renderMetadataFields();
     }
 
     function generateMarkdown() {
@@ -449,6 +506,7 @@
 
     renderMetadataFields();
 
+    document.getElementById("reset-button").addEventListener("click", resetTool);
     document.getElementById("generate-button").addEventListener("click", generateMarkdown);
     document.getElementById("copy-button").addEventListener("click", async () => {
       try {

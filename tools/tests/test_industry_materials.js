@@ -74,16 +74,22 @@ test("manufacturing Markdown preserves source quantities and combines them for M
   context.activity = "Manufacturing";
   const output = vm.runInContext(`
     const parsed = parseIndustryInput(input, activity);
-    buildIndustryMarkdown(parsed, metadataValues(parsed, id => ({runs: "10", "portion-size": "1"})[id] ?? ""))
+    buildIndustryMarkdown(parsed, metadataValues(parsed, id => ({me: "10", te: "20", runs: "10", "portion-size": "1"})[id] ?? ""))
   `, context);
 
   assert.match(output, /## Manufacturing - Armor Command Burst I/);
   assert.match(output, /\| Attribute\s+\| Value\s+\|\n\| -+ \| -+ \|/);
   assert.match(output, /\| Blueprint\s+\| Armor Command Burst I Blueprint 43547\s+\|/);
-  assert.match(output, /\| Units\s+\| 10\s+\|/);
+  assert.match(output, /\| ME\s+\| 10\s+\|\n\| TE\s+\| 20\s+\|/);
+  assert.match(output, /\| Time\s+\|\s+\|/);
+  assert.doesNotMatch(output, /\| (?:Result|Units)\s+\|/);
+  assert.match(output, /### Input\n\nMinerals/);
   assert.match(output, /\| --------- \| -------: \| --------: \| --------------: \| -----: \|/);
   assert.match(output, /\| Tritanium \| 5\s+\| 0\s+\| 3\.82\s+\| 34\s+\|/);
   assert.match(output, /\| Tritanium \| 2\s+\| 0\s+\| 3\.82\s+\| 34\s+\|/);
+  assert.match(output, /### Output\n\n\| Name\s+\| Quantity\s+\|\n\| -+ \| -------: \|\n\| Armor Command Burst I \| 10\s+\|/);
+  assert.match(output, /### Multibuy\n\n\| Name/);
+  assert.match(output, /### Detailed Multibuy\n\n### Detailed Output\n\n### Notes$/);
   assert.match(output, /\| Tritanium \| 7\s+\|/);
 });
 
@@ -129,14 +135,16 @@ test("invention uses the suggested result name and keeps an empty optional-items
     buildIndustryMarkdown(parsed, metadataValues(parsed, id => fields[id] ?? ""))
   `, context);
 
-  assert.match(output, /\| Result\s+\| Armor Command Burst II\s+\|/);
+  assert.doesNotMatch(output, /\| Result\s+\|/);
   assert.match(output, /\| ME\s+\| 2\s+\|\n\| TE\s+\| 4\s+\|\n\| Result Runs\s+\| 10\s+\|/);
+  assert.match(output, /\| Time\s+\|\s+\|/);
   assert.match(output, /Optional items\n\n\| Item \| Required \| Available \| Est\. Unit price \| typeID \|\n\| ---- \| -------: \| --------: \| --------------: \| -----: \|/);
-  assert.match(output, /Multibuy\n\n\| Name[\s\S]*?\n\| -+ \| -------: \|/);
+  assert.match(output, /### Output\n\n\| Name[\s\S]*?\n\| Armor Command Burst II Blueprint \| \s+\|/);
+  assert.match(output, /### Multibuy\n\n\| Name[\s\S]*?\n\| -+ \| -------: \|/);
   assert.match(output, /\| Datacore - Nuclear Physics \| 6\s+\|/);
 });
 
-test("copying and research activities parse, with metadata limited to their activity", () => {
+test("copying and research outputs include Time and retain activity-specific fields", () => {
   const { context } = createContext();
   for (const activity of ["Copying", "Researching ME", "Researching TE"]) {
     context.activity = activity;
@@ -145,13 +153,14 @@ test("copying and research activities parse, with metadata limited to their acti
     `, context);
     assert.equal(parsed.activity, activity);
   }
-    const copyingOutput = vm.runInContext(`
+  const copyingOutput = vm.runInContext(`
       (() => {
         const parsed = parseIndustryInput("Prototype Cloaking Device I Blueprint\\t13000", "Copying");
         return buildIndustryMarkdown(parsed, metadataValues(parsed, id => ({runs: "1", "runs-per-copy": "10"})[id] ?? ""));
       })()
     `, context);
-    assert.match(copyingOutput, /\| Runs\s+\| 1\s+\|\n\| Runs per copy\s+\| 10\s+\|/);
+  assert.match(copyingOutput, /\| Runs\s+\| 1\s+\|\n\| Runs per copy\s+\| 10\s+\|\n\| Time\s+\|\s+\|/);
+  assert.match(copyingOutput, /### Output\n\n\| Name[\s\S]*?\| Prototype Cloaking Device I Blueprint \| \s+\|/);
   const researchOutput = vm.runInContext(`
       (() => {
         const parsed = parseIndustryInput("Prototype Cloaking Device I Blueprint\\t13000\\nItems\\nItem\\tRequired\\tAvailable\\tEst. Unit price\\ttypeID\\nReports\\t5\\t0\\t31.84\\t3814", "Researching ME");
@@ -160,7 +169,9 @@ test("copying and research activities parse, with metadata limited to their acti
   `, context);
   assert.match(researchOutput, /## Researching ME - Prototype Cloaking Device I/);
   assert.match(researchOutput, /\| Reports \| 5\s+\|/);
-  assert.match(researchOutput, /Multibuy/);
+  assert.match(researchOutput, /\| Time\s+\|\s+\|/);
+  assert.match(researchOutput, /### Multibuy/);
+  assert.match(researchOutput, /### Detailed Multibuy\n\n### Detailed Output\n\n### Notes$/);
   assert.doesNotMatch(researchOutput, /\| (?:Runs|Result)\s+\|/);
   assert.match(researchOutput, /\| Activity\s+\| Researching ME\s+\|/);
 });
@@ -195,6 +206,8 @@ test("Researching ME generates Markdown on parse without activity inputs", () =>
   elements.get("parse-button").listeners.click();
 
   assert.match(elements.get("markdown-output").value, /## Researching ME/);
+  assert.match(elements.get("markdown-output").value, /\| Time\s+\|\s+\|/);
+  assert.equal(elements.get("time-warning").hidden, false);
   assert.equal(elements.get("copy-button").disabled, false);
 });
 
@@ -210,11 +223,22 @@ test("Manufacturing defaults Portion Size to one and validates user-provided Run
 
   const fields = elements.get("metadata-fields");
   assert.equal(fields.querySelector('[data-field="portion-size"]').value, "1");
+  assert.equal(elements.get("time-warning").hidden, false);
+  fields.querySelector('[data-field="me"]').value = "10";
+  fields.querySelector('[data-field="te"]').value = "20";
   const runs = fields.querySelector('[data-field="runs"]');
   runs.value = "10";
   runs.listeners.input();
   elements.get("generate-button").listeners.click();
-  assert.match(elements.get("markdown-output").value, /\| Units\s+\| 10\s+\|/);
+  assert.match(elements.get("markdown-output").value, /\| Armor Command Burst I\s+\| 10\s+\|/);
+  assert.match(elements.get("markdown-output").value, /\| Time\s+\|\s+\|/);
+
+  const time = fields.querySelector('[data-field="time"]');
+  time.value = "1h 2m";
+  time.listeners.input();
+  assert.equal(elements.get("time-warning").hidden, true);
+  elements.get("generate-button").listeners.click();
+  assert.match(elements.get("markdown-output").value, /\| Time\s+\| 1h 2m\s+\|/);
 
   runs.value = "1.5";
   runs.listeners.input();
@@ -259,4 +283,36 @@ test("activity radios are ordered with Manufacturing default and drive output fi
   assert.match(elements.get("markdown-output").value, /## Invention - Armor Command Burst I/);
   assert.match(elements.get("markdown-output").value, /\| Activity\s+\| Invention\s+\|/);
   assert.equal(vm.runInContext("parsedInput.activity", context), "Invention");
+});
+
+test("Reset clears input and Markdown and restores the default activity", () => {
+  const { context, elements, activityRadios } = createContext();
+  activityRadios[0].checked = false;
+  activityRadios[1].checked = true;
+  activityRadios[1].listeners.change();
+  elements.get("industry-input").value = "Armor Command Burst I Blueprint\t43547";
+  elements.get("parse-button").listeners.click();
+  elements.get("metadata-fields").querySelector('[data-field="runs"]').value = "3";
+  elements.get("generate-button").listeners.click();
+  assert.notEqual(elements.get("markdown-output").value, "");
+  assert.equal(elements.get("copy-button").disabled, false);
+
+  elements.get("metadata-error").textContent = "Old error";
+  elements.get("metadata-error").hidden = false;
+  elements.get("reset-button").listeners.click();
+
+  assert.equal(elements.get("industry-input").value, "");
+  assert.equal(elements.get("markdown-output").value, "");
+  assert.equal(elements.get("copy-button").disabled, true);
+  assert.equal(elements.get("status").textContent, "");
+  assert.equal(elements.get("input-error").hidden, true);
+  assert.equal(elements.get("metadata-error").hidden, true);
+  assert.equal(elements.get("metadata-error").textContent, "");
+  assert.deepEqual(activityRadios.map((radio) => radio.checked), [true, false, false, false, false]);
+  assert.equal(elements.get("metadata-fields").querySelector('[data-field="portion-size"]').value, "1");
+  assert.equal(elements.get("metadata-fields").querySelector('[data-field="me"]').value, "");
+  assert.equal(elements.get("metadata-fields").querySelector('[data-field="time"]').value, "");
+  assert.equal(elements.get("time-warning").hidden, false);
+  assert.equal(elements.get("invention-note").hidden, true);
+  assert.equal(vm.runInContext("parsedInput", context), null);
 });
